@@ -1,4 +1,12 @@
-"""Mock LLM Provider：返回固定结构化数据，用于测试和 CLI 验证。"""
+"""Mock LLM Provider：基于字幕文本的规则分析引擎。
+
+用关键词匹配、模式识别从字幕中提取投资观点、风险、待验证信号。
+不是真实 LLM，但产出与输入内容关联，使 pipeline 测试更有代表性。
+"""
+
+from __future__ import annotations
+
+import re
 
 from podcast_research.analysis.models import (
     ExtractionResult,
@@ -7,112 +15,56 @@ from podcast_research.analysis.models import (
     TrackingSignal,
     Entity,
     Risk,
+    SubtitleSegment,
 )
 from podcast_research.llm.base import LLMProvider
 
 
+# ── 关词库 ──
+
+BULLISH_WORDS = ["看多", "看好", "上涨", "增持", "利好", "乐观", "积极", "突破", "反弹", "回升", "值得关注", "值得关注", "优势", "增长", "扩张", "偏低", "适合"]
+BEARISH_WORDS = ["看空", "看淡", "下跌", "减持", "利空", "悲观", "谨慎", "消极", "回调", "回落", "放缓", "减弱", "不同意", "吸引力减弱", "风险", "警惕"]
+NEUTRAL_WORDS = ["中性", "观望", "平衡", "不确定", "难以判断", "视情况"]
+RISK_WORDS = ["风险", "警惕", "担忧", "隐患", "波动", "不确定性", "政策风险", "竞争风险", "地缘", "汇率"]
+SIGNAL_WORDS = ["关注", "跟踪", "观察", "验证", "待确认", "后续", "值得留意", "值得关注", "信号"]
+STOCK_PATTERN = re.compile(
+    r"(宁德时代|比亚迪|茅台|五粮液|腾讯|阿里|美团|京东|拼多多|平安银行|招商银行|工商银行"
+    r"|恒瑞医药|药明康德|中芯国际|隆基绿能|通威股份|阳光电源|中远海控|万华化学"
+    r"|格力电器|美的集团|海尔智家|伊利股份|蒙牛|海天味业|中国平安|中国人寿"
+    r"|紫光股份|科大讯飞|大疆|小米|华为|OPPO|vivo|联想|比亚迪电子"
+    r"|港股|A股|美股|创业板|科创板|红利|ETF|基金|债券|黄金|原油|铜|锂|镍)"
+)
+MARKET_PATTERN = re.compile(r"(A股|港股|美股|创业板|科创板|新三板|纳斯达克|港股通)")
+SPEAKER_PATTERN = re.compile(r"(嘉宾[ABCD]|主持人|主持|主播|主讲|嘉宾)")
+ENTITY_TYPE_MAP = {
+    "A股": "market", "港股": "market", "美股": "market",
+    "创业板": "market", "科创板": "market",
+    "红利": "asset_class", "ETF": "asset_class", "基金": "fund", "债券": "asset_class",
+    "黄金": "asset_class", "原油": "asset_class",
+}
+
+_direction_label = {"bullish": "看多", "bearish": "看空", "neutral": "中性"}
+
+
 class MockLLMProvider(LLMProvider):
+
     def extract_facts(self, cleaned_text: str, segments_text: str) -> ExtractionResult:
+        segments = self._parse_segments_text(segments_text)
+        entities = self._extract_entities(cleaned_text)
+        views = self._extract_views(segments, entities, cleaned_text)
+        risks = self._extract_risks(segments, cleaned_text)
+        signals = self._extract_signals(segments, entities, cleaned_text)
+        quotes = self._extract_quotes(segments)
+        uncertain = self._extract_uncertain(segments, views)
+
         return ExtractionResult(
-            metadata={"source": "mock", "model": "mock-v1"},
-            mentioned_entities=[
-                Entity(name="宁德时代", normalized_name="宁德时代", entity_type="stock"),
-                Entity(name="港股红利", normalized_name="港股红利", entity_type="asset_class"),
-            ],
-            investment_views=[
-                InvestmentView(
-                    target_name="宁德时代",
-                    target_type="stock",
-                    view_direction="bullish",
-                    view_direction_label="看多",
-                    logic_chain="储能需求增长带动电池出货，海外业务仍有扩张空间",
-                    time_horizon="medium",
-                    confidence="cautious",
-                    evidence=Evidence(
-                        evidence_type="行业数据",
-                        evidence_detail="储能出货数据增长",
-                        evidence_strength="medium",
-                    ),
-                    risk_warning="海外政策与价格竞争风险",
-                    speaker_label="嘉宾A",
-                    speaker_role="guest",
-                    speaker_confidence="medium",
-                    source_quote="储能需求增长带动电池出货，海外业务仍有扩张空间",
-                    timestamp_start="00:00:19.000",
-                    timestamp_end="00:00:42.000",
-                ),
-                InvestmentView(
-                    target_name="港股红利",
-                    target_type="asset_class",
-                    view_direction="neutral",
-                    view_direction_label="中性",
-                    logic_chain="估值偏低适合防御配置，但汇率和地缘风险需警惕",
-                    evidence=Evidence(
-                        evidence_type="个人判断",
-                        evidence_detail="基于估值和风险判断",
-                        evidence_strength="weak",
-                    ),
-                    risk_warning="汇率波动和地缘政治风险",
-                    speaker_label="嘉宾A",
-                    speaker_role="guest",
-                    speaker_confidence="medium",
-                    source_quote="港股高股息标的目前估值偏低，适合防御型配置",
-                    timestamp_start="00:00:51.000",
-                    timestamp_end="00:01:05.000",
-                ),
-                InvestmentView(
-                    target_name="港股红利",
-                    target_type="asset_class",
-                    view_direction="bearish",
-                    view_direction_label="看空",
-                    logic_chain="高股息公司利润增速放缓，吸引力减弱",
-                    evidence=Evidence(
-                        evidence_type="个人判断",
-                        evidence_detail="利润增速趋势判断",
-                        evidence_strength="weak",
-                    ),
-                    speaker_label="嘉宾B",
-                    speaker_role="guest",
-                    speaker_confidence="low",
-                    source_quote="很多高股息公司利润增速已经在放缓",
-                    timestamp_start="00:01:13.000",
-                    timestamp_end="00:01:20.000",
-                ),
-            ],
-            risks=[
-                Risk(
-                    description="海外政策与价格竞争风险",
-                    target_name="宁德时代",
-                    speaker_label="嘉宾A",
-                    source_quote="海外政策与价格竞争风险也需要警惕",
-                    timestamp="00:00:36.000",
-                ),
-                Risk(
-                    description="汇率波动和地缘政治风险",
-                    target_name="港股红利",
-                    speaker_label="嘉宾A",
-                    source_quote="要注意汇率波动和地缘政治风险",
-                    timestamp="00:00:59.000",
-                ),
-            ],
-            tracking_signals=[
-                TrackingSignal(
-                    target_name="宁德时代",
-                    signal="关注储能订单数据",
-                    trigger_condition="储能出货量环比增速",
-                    expected_date="下一季度",
-                    source_quote="储能需求增长带动电池出货",
-                    timestamp="00:00:19.000",
-                ),
-            ],
-            key_quotes=[
-                "储能需求增长带动电池出货，海外业务仍有扩张空间",
-                "港股高股息标的目前估值偏低，适合防御型配置",
-                "很多高股息公司利润增速已经在放缓",
-            ],
-            uncertain_items=[
-                "嘉宾B对港股红利的判断缺乏具体数据支撑",
-            ],
+            metadata={"source": "mock-rule-engine", "model": "mock-v1"},
+            mentioned_entities=entities,
+            investment_views=views,
+            risks=risks,
+            tracking_signals=signals,
+            key_quotes=quotes,
+            uncertain_items=uncertain,
         )
 
     def render_report(self, extraction: ExtractionResult) -> str:
@@ -128,9 +80,8 @@ class MockLLMProvider(LLMProvider):
             "",
         ]
 
-        # Summary
         view_count = len(extraction.investment_views)
-        entity_names = ", ".join(e.name for e in extraction.mentioned_entities)
+        entity_names = ", ".join(e.name for e in extraction.mentioned_entities) or "未识别标的"
         lines.append(f"本期讨论涉及 **{entity_names}**，共提取 **{view_count}** 条投资观点。")
 
         # View matrix
@@ -140,25 +91,35 @@ class MockLLMProvider(LLMProvider):
         lines.append("| 标的 | 方向 | 逻辑 | 证据类型 | 发言人 | 时间戳 |")
         lines.append("|------|------|------|----------|--------|--------|")
         for v in extraction.investment_views:
+            direction = v.view_direction_label or _direction_label.get(v.view_direction, v.view_direction)
+            logic_display = v.logic_chain[:60] if len(v.logic_chain) > 60 else v.logic_chain
             lines.append(
-                f"| {v.target_name} | {v.view_direction_label or v.view_direction} "
-                f"| {v.logic_chain[:40]} | {v.evidence.evidence_type} "
-                f"| {v.speaker_label} | {v.timestamp_start} |"
+                f"| {v.target_name} | {direction} "
+                f"| {logic_display} | {v.evidence.evidence_type} "
+                f"| {v.speaker_label or '未识别'} | {v.timestamp_start} |"
             )
 
         # Risks
         lines.append("")
         lines.append("## 风险提示")
         lines.append("")
-        for r in extraction.risks:
-            lines.append(f"- **{r.description}**（{r.target_name}，{r.speaker_label} @ {r.timestamp}）")
+        if extraction.risks:
+            for r in extraction.risks:
+                label = f"（{r.target_name}，{r.speaker_label} @ {r.timestamp}）" if r.target_name else ""
+                lines.append(f"- **{r.description}**{label}")
+        else:
+            lines.append("本期未识别到明确风险提示。")
 
         # Tracking signals
         lines.append("")
         lines.append("## 待验证信号")
         lines.append("")
-        for s in extraction.tracking_signals:
-            lines.append(f"- {s.signal}（{s.target_name}，触发条件：{s.trigger_condition}，预期时间：{s.expected_date}）")
+        if extraction.tracking_signals:
+            for s in extraction.tracking_signals:
+                extra = f"（{s.target_name}，触发条件：{s.trigger_condition}，预期时间：{s.expected_date}）" if s.target_name else f"（触发条件：{s.trigger_condition}）"
+                lines.append(f"- {s.signal}{extra}")
+        else:
+            lines.append("本期未识别到待验证信号。")
 
         # Key quotes
         lines.append("")
@@ -178,6 +139,186 @@ class MockLLMProvider(LLMProvider):
         lines.append("")
         lines.append("---")
         lines.append("")
-        lines.append("*分析模型：mock-v1 | 分析时间：自动生成*")
+        lines.append("*分析方式：规则引擎 mock-v1（非真实 LLM） | 不构成投资建议*")
 
         return "\n".join(lines)
+
+    # ── 内部方法 ──
+
+    def _parse_segments_text(self, segments_text: str) -> list[dict]:
+        """从 pipeline 传入的 segments_text 格式: [start-end] text"""
+        result = []
+        for line in segments_text.strip().split("\n"):
+            match = re.match(r"\[([^\]]+)\]\s*(.*)", line.strip())
+            if match:
+                timestamps = match.group(1)
+                text = match.group(2)
+                parts = timestamps.split("-", 1)
+                start = parts[0] if parts else ""
+                end = parts[1] if len(parts) > 1 else ""
+                result.append({"start": start, "end": end, "text": text})
+        return result
+
+    def _extract_entities(self, text: str) -> list[Entity]:
+        seen: set[str] = set()
+        entities = []
+        for m in STOCK_PATTERN.finditer(text):
+            name = m.group(1)
+            if name not in seen:
+                seen.add(name)
+                entity_type = ENTITY_TYPE_MAP.get(name, "stock")
+                entities.append(Entity(name=name, normalized_name=name, entity_type=entity_type))
+        return entities
+
+    def _detect_direction(self, text: str) -> str:
+        bullish_hits = sum(1 for w in BULLISH_WORDS if w in text)
+        bearish_hits = sum(1 for w in BEARISH_WORDS if w in text)
+        neutral_hits = sum(1 for w in NEUTRAL_WORDS if w in text)
+        if bullish_hits > bearish_hits:
+            return "bullish"
+        if bearish_hits > bullish_hits and bearish_hits > 0:
+            return "bearish"
+        if neutral_hits > 0:
+            return "neutral"
+        return "neutral"
+
+    def _detect_speaker(self, text: str) -> tuple[str, str, str]:
+        m = SPEAKER_PATTERN.search(text)
+        if m:
+            return m.group(1), "guest" if "嘉宾" in m.group(1) else "host", "medium"
+        return "未识别发言人", "unknown", "low"
+
+    def _extract_views(self, segments: list[dict], entities: list[Entity], full_text: str) -> list[InvestmentView]:
+        views = []
+        used_segments: set[int] = set()
+
+        for entity in entities:
+            target = entity.name
+            # 找到所有提到该标的的段索引
+            target_indices = [i for i, s in enumerate(segments) if target in s["text"]]
+            if not target_indices:
+                continue
+
+            for idx in target_indices:
+                if idx in used_segments:
+                    continue
+
+                # 扩展窗口：该段 ± 2 段，构成上下文
+                window_start = max(0, idx - 2)
+                window_end = min(len(segments), idx + 3)
+                window_texts = [segments[i]["text"] for i in range(window_start, window_end)]
+                window_combined = " ".join(window_texts)
+
+                direction = self._detect_direction(window_combined)
+                # 如果窗口内没有方向词，跳过（仅提及标的不构成观点）
+                if not any(w in window_combined for w in BULLISH_WORDS + BEARISH_WORDS + NEUTRAL_WORDS):
+                    continue
+
+                # 观点来源段：优先取包含方向词的段
+                source_idx = idx
+                for i in range(window_start, window_end):
+                    if any(w in segments[i]["text"] for w in BULLISH_WORDS + BEARISH_WORDS + NEUTRAL_WORDS):
+                        source_idx = i
+                        break
+
+                source_seg = segments[source_idx]
+                speaker, role, conf = self._detect_speaker(source_seg["text"])
+
+                # logic_chain: 合并窗口内的相关句子
+                relevant = [s for s in window_texts if target in s or any(w in s for w in BULLISH_WORDS + BEARISH_WORDS + NEUTRAL_WORDS)]
+                logic_chain = " ".join(relevant)[:120] if relevant else source_seg["text"][:120]
+
+                evidence_type = self._infer_evidence_type(window_combined, direction)
+
+                views.append(InvestmentView(
+                    target_name=target,
+                    target_type=entity.entity_type,
+                    view_direction=direction,
+                    view_direction_label=_direction_label.get(direction, direction),
+                    logic_chain=logic_chain,
+                    evidence=Evidence(evidence_type=evidence_type, evidence_strength="weak"),
+                    risk_warning="",
+                    speaker_label=speaker,
+                    speaker_role=role,
+                    speaker_confidence=conf,
+                    source_quote=source_seg["text"][:100],
+                    timestamp_start=source_seg["start"],
+                    timestamp_end=source_seg["end"],
+                    uncertainty="[规则引擎推断，未经 LLM 验证]" if conf == "low" else "",
+                ))
+                used_segments.add(source_idx)
+
+        return views
+
+    def _infer_evidence_type(self, text: str, direction: str) -> str:
+        if any(kw in text for kw in ["数据", "财报", "业绩", "报告", "统计", "出货", "增速", "营收", "利润"]):
+            return "财报/数据"
+        if any(kw in text for kw in ["政策", "规定", "监管", "改革", "海外政策"]):
+            return "政策"
+        if any(kw in text for kw in ["估值", "PE", "PB", "市值", "溢价", "偏低", "偏高"]):
+            return "估值"
+        if direction != "neutral":
+            return "个人判断"
+        return "未给依据"
+
+    def _extract_risks(self, segments: list[dict], full_text: str) -> list[Risk]:
+        risks = []
+        for seg in segments:
+            seg_text = seg["text"]
+            risk_hits = [w for w in RISK_WORDS if w in seg_text]
+            if not risk_hits:
+                continue
+            speaker, _, _ = self._detect_speaker(seg_text)
+            # 尝试绑定附近标的
+            targets = [e.name for e in self._extract_entities(seg_text)]
+            target_name = targets[0] if targets else ""
+            risks.append(Risk(
+                description=f"{', '.join(risk_hits[:2])}相关风险",
+                target_name=target_name,
+                speaker_label=speaker,
+                source_quote=seg_text[:60],
+                timestamp=seg["start"],
+            ))
+        return risks
+
+    def _extract_signals(self, segments: list[dict], entities: list[Entity], full_text: str) -> list[TrackingSignal]:
+        signals = []
+        for seg in segments:
+            seg_text = seg["text"]
+            if not any(w in seg_text for w in SIGNAL_WORDS):
+                continue
+            targets = [e.name for e in entities if e.name in seg_text]
+            if not targets:
+                continue
+            for target in targets:
+                signals.append(TrackingSignal(
+                    target_name=target,
+                    signal=seg_text[:50],
+                    trigger_condition="需人工确认",
+                    expected_date="待定",
+                    source_quote=seg_text[:60],
+                    timestamp=seg["start"],
+                ))
+        return signals
+
+    def _extract_quotes(self, segments: list[dict]) -> list[str]:
+        """提取包含投资关键词的原文作为 key_quotes。"""
+        quotes = []
+        for seg in segments:
+            seg_text = seg["text"]
+            has_direction = any(w in seg_text for w in BULLISH_WORDS + BEARISH_WORDS + NEUTRAL_WORDS)
+            has_target = STOCK_PATTERN.search(seg_text) is not None
+            has_signal = any(w in seg_text for w in SIGNAL_WORDS)
+            if has_direction or (has_target and has_signal):
+                quotes.append(seg_text)
+        return quotes[:8]
+
+    def _extract_uncertain(self, segments: list[dict], views: list[InvestmentView]) -> list[str]:
+        uncertain = []
+        low_conf_views = [v for v in views if v.speaker_confidence == "low"]
+        if low_conf_views:
+            uncertain.append(f"{len(low_conf_views)} 条观点来自低置信度发言人，需进一步验证")
+        no_evidence_views = [v for v in views if v.evidence.evidence_type == "未给依据"]
+        if no_evidence_views:
+            uncertain.append(f"{len(no_evidence_views)} 条观点未给出明确证据类型，为规则引擎推断")
+        return uncertain

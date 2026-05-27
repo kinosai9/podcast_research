@@ -4,7 +4,7 @@ from podcast_research.analysis.models import SubtitleSegment
 
 _AD_KEYWORDS = ["赞助", "广告", "推广", "赞助商", "特别鸣谢", "brand", "sponsor"]
 _MERGE_THRESHOLD_SEC = 5.0
-_MERGE_THRESHOLD_LINES = 3
+_MERGE_THRESHOLD_LINES = 6
 
 
 def clean_segments(
@@ -58,14 +58,17 @@ def _merge_short(segments: list[SubtitleSegment]) -> list[SubtitleSegment]:
         return segments
 
     merged = []
-    buffer = [segments[0]]
+    buffer: list[SubtitleSegment] = []
 
-    for s in segments[1:]:
-        if len(buffer) < _MERGE_THRESHOLD_LINES:
+    for s in segments:
+        # 只合并长度 < 20 字符的短段
+        if len(s.text.strip()) < 20 and len(buffer) < 4:
             buffer.append(s)
         else:
-            merged.append(_join_buffer(buffer))
-            buffer = [s]
+            if buffer:
+                merged.append(_join_buffer(buffer))
+                buffer = []
+            merged.append(s)
 
     if buffer:
         merged.append(_join_buffer(buffer))

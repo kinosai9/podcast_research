@@ -26,7 +26,17 @@ logger = logging.getLogger(__name__)
 def get_llm_provider(provider_name: str) -> LLMProvider:
     if provider_name == "mock":
         return MockLLMProvider()
-    raise ValueError(f"P0 仅支持 mock provider，暂不支持: {provider_name}")
+    if provider_name == "openai-compatible":
+        from podcast_research.llm.openai_compatible_provider import OpenAICompatibleProvider
+        from podcast_research.config import LLM_BASE_URL, LLM_API_KEY, LLM_MODEL
+        if not LLM_API_KEY:
+            raise ValueError("openai-compatible provider 需要配置 LLM_API_KEY（见 .env）")
+        return OpenAICompatibleProvider(
+            base_url=LLM_BASE_URL,
+            api_key=LLM_API_KEY,
+            model=LLM_MODEL,
+        )
+    raise ValueError(f"不支持的 LLM provider: {provider_name}，可选: mock, openai-compatible")
 
 
 def analyze(
