@@ -1494,6 +1494,342 @@ def obsidian_generate_claims_signals(
     console.print(f"  Indexes: 99_System/Claim Index.md, Signal Index.md, Claim_Signal_Generation_Log.md")
 
 
+# --- workspace 子命令组 (under obsidian) ---
+workspace_app = typer.Typer(help="Workspace dashboard & knowledge map refresh")
+obsidian_app.add_typer(workspace_app, name="workspace")
+
+
+@workspace_app.command("refresh")
+def workspace_refresh(
+    vault: str = typer.Option(None, "--vault", help="Obsidian Vault 路径（覆盖 .env 配置）"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="只预览不写入"),
+    home_only: bool = typer.Option(False, "--home-only", help="只刷新 Home.md"),
+    knowledge_map_only: bool = typer.Option(False, "--knowledge-map-only", help="只刷新 Knowledge Map"),
+    review_queue_only: bool = typer.Option(False, "--review-queue-only", help="只刷新 Review Queue"),
+) -> None:
+    """刷新 Workspace Dashboard：Home.md、Knowledge Map、Review Queue。
+
+    从 Vault 文件系统扫描所有卡片和报告，生成面向使用者的导航和审阅聚合页。
+    不调用 LLM，不连接外部 API，不修改卡片内容。
+    """
+    from podcast_research.config import OBSIDIAN_VAULT_PATH
+    from podcast_research.workspace import refresh_workspace
+
+    vault_path_str = vault or OBSIDIAN_VAULT_PATH
+    if not vault_path_str:
+        console.print("[red]请指定 --vault 路径或在 .env 中配置 OBSIDIAN_VAULT_PATH[/red]")
+        raise typer.Exit(code=1)
+
+    vault_path = Path(vault_path_str)
+    if not vault_path.exists():
+        console.print(f"[red]Vault 路径不存在: {vault_path}[/red]")
+        raise typer.Exit(code=1)
+
+    if home_only and knowledge_map_only:
+        console.print("[red]--home-only 和 --knowledge-map-only 不能同时使用[/red]")
+        raise typer.Exit(code=1)
+    if home_only and review_queue_only:
+        console.print("[red]--home-only 和 --review-queue-only 不能同时使用[/red]")
+        raise typer.Exit(code=1)
+    if knowledge_map_only and review_queue_only:
+        console.print("[red]--knowledge-map-only 和 --review-queue-only 不能同时使用[/red]")
+        raise typer.Exit(code=1)
+
+    if dry_run:
+        console.print(f"[dim][DRY-RUN] Vault: {vault_path}[/dim]")
+
+    result = refresh_workspace(
+        vault_path=vault_path,
+        dry_run=dry_run,
+        home_only=home_only,
+        knowledge_map_only=knowledge_map_only,
+        review_queue_only=review_queue_only,
+    )
+
+    stats = result["stats"]
+
+    # Stats table
+    table = Table(title="Workspace Snapshot")
+    table.add_column("Category", style="cyan")
+    table.add_column("Count", justify="right")
+    table.add_column("Detail", style="dim")
+
+    table.add_row("Reports", str(stats["reports"]), "")
+    table.add_row("Topics", str(stats["topics"]), f"{stats['core_topics']} core")
+    table.add_row("Companies", str(stats["companies"]), f"{stats['core_companies']} core")
+    table.add_row("Claims", str(stats["claims"]), f"{stats['active_claims']} active")
+    table.add_row("Signals", str(stats["signals"]), f"{stats['open_signals']} open, {stats['watching_signals']} watching")
+    table.add_row("LLM Patches", str(stats["patches"]), f"{stats['pending_patches']} pending")
+    table.add_row("Channels", str(stats["channels"]), "")
+    console.print(table)
+
+    if dry_run:
+        console.print("\n[dim][DRY-RUN] 未写入文件。预览内容请见上方表格。[/dim]")
+        console.print(f"[dim]将生成: Home.md, 99_System/Knowledge Map.md, 99_System/Review Queue.md[/dim]")
+    else:
+        for f in result["files_written"]:
+            console.print(f"  [green]已写入:[/green] {f}")
+
+
+@workspace_app.command("backfill-relations")
+def workspace_backfill_relations(
+    vault: str = typer.Option(None, "--vault", help="Obsidian Vault 路径（覆盖 .env 配置）"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="只预览不写入"),
+    apply: bool = typer.Option(False, "--apply", help="执行回填操作"),
+) -> None:
+    """回填 Claim/Signal 的 related_topics / related_companies 关联。
+
+    从正文文本中提取 topic 和 company 引用，写入 frontmatter。
+    不调用 LLM，不修改正文。
+    """
+    from podcast_research.config import OBSIDIAN_VAULT_PATH
+    from podcast_research.workspace import backfill_relations
+
+    vault_path_str = vault or OBSIDIAN_VAULT_PATH
+    if not vault_path_str:
+        console.print("[red]请指定 --vault 路径或在 .env 中配置 OBSIDIAN_VAULT_PATH[/red]")
+        raise typer.Exit(code=1)
+
+    vault_path = Path(vault_path_str)
+    if not vault_path.exists():
+        console.print(f"[red]Vault 路径不存在: {vault_path}[/red]")
+        raise typer.Exit(code=1)
+
+    if not dry_run and not apply:
+        console.print("[red]请指定 --dry-run 或 --apply[/red]")
+        raise typer.Exit(code=1)
+
+    if dry_run:
+        console.print(f"[dim][DRY-RUN] Vault: {vault_path}[/dim]")
+
+    result = backfill_relations(vault_path=vault_path, dry_run=dry_run, apply=apply)
+
+    stats = result["stats"]
+    console.print(f"[green]Relation Backfill 扫描完成[/green]")
+    console.print(f"  Claims scanned: {stats['claims_scanned']}")
+    console.print(f"  Signals scanned: {stats['signals_scanned']}")
+    console.print(f"  Claims updated: {stats['claims_updated']}")
+    console.print(f"  Signals updated: {stats['signals_updated']}")
+    console.print(f"  Topics added: {stats['topics_added']}")
+    console.print(f"  Companies added: {stats['companies_added']}")
+
+    if dry_run and stats["claims_updated"] + stats["signals_updated"] > 0:
+        console.print("\n[bold]Preview of changes:[/bold]")
+        for r in result["results"]:
+            if r.get("updated"):
+                new_t = r.get("new_topics", [])
+                new_c = r.get("new_companies", [])
+                parts = []
+                if new_t:
+                    parts.append(f"topics +{new_t}")
+                if new_c:
+                    parts.append(f"companies +{new_c}")
+                console.print(f"  [cyan]{r['card_id']}[/cyan] ({r['card_type']}): {', '.join(parts)}")
+
+    if apply:
+        console.print(f"\n[green]已写入:[/green] 99_System/Relation_Backfill_Log.md")
+
+
+@workspace_app.command("refresh-curation-status")
+def workspace_refresh_curation_status(
+    vault: str = typer.Option(None, "--vault", help="Obsidian Vault 路径（覆盖 .env 配置）"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="只预览不写入"),
+) -> None:
+    """刷新 Topic/Company/Claim/Signal 的 curation_status 字段。
+
+    规则: LLM-WIKI marker → enhanced, has source_reports → indexed, etc.
+    不调用 LLM，不修改正文，只更新 frontmatter。
+    """
+    from podcast_research.config import OBSIDIAN_VAULT_PATH
+    from podcast_research.workspace import refresh_curation_status
+
+    vault_path_str = vault or OBSIDIAN_VAULT_PATH
+    if not vault_path_str:
+        console.print("[red]请指定 --vault 路径或在 .env 中配置 OBSIDIAN_VAULT_PATH[/red]")
+        raise typer.Exit(code=1)
+
+    vault_path = Path(vault_path_str)
+    if not vault_path.exists():
+        console.print(f"[red]Vault 路径不存在: {vault_path}[/red]")
+        raise typer.Exit(code=1)
+
+    if dry_run:
+        console.print(f"[dim][DRY-RUN] Vault: {vault_path}[/dim]")
+
+    result = refresh_curation_status(vault_path=vault_path, dry_run=dry_run)
+
+    stats = result["stats"]
+    console.print(f"[green]Curation Status 刷新完成[/green]")
+    console.print(f"  Topics: {stats['topics_scanned']} scanned, {stats['topics_updated']} updated")
+    console.print(f"  Companies: {stats['companies_scanned']} scanned, {stats['companies_updated']} updated")
+    console.print(f"  Claims: {stats['claims_scanned']} scanned, {stats['claims_updated']} updated")
+    console.print(f"  Signals: {stats['signals_scanned']} scanned, {stats['signals_updated']} updated")
+
+    if dry_run and any(r.get("updated") for r in result["results"]):
+        console.print("\n[bold]Preview of changes:[/bold]")
+        for r in result["results"]:
+            if r.get("updated"):
+                console.print(
+                    f"  [cyan]{r['card_id']}[/cyan]: "
+                    f"{r['current_curation'] or '(none)'} → "
+                    f"[green]{r['new_curation']}[/green]"
+                )
+
+
+@workspace_app.command("polish-report-metadata")
+def workspace_polish_report_metadata(
+    vault: str = typer.Option(None, "--vault", help="Obsidian Vault 路径（覆盖 .env 配置）"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="只预览不写入"),
+    apply: bool = typer.Option(False, "--apply", help="执行元数据回填"),
+    overwrite_title: bool = typer.Option(False, "--overwrite-title", help="覆盖已存在的 title"),
+) -> None:
+    """回填 Report 元数据：title、published_at，修复 H1 和 Source Reports 显示名。
+
+    从 SQLite channel_videos 表查询视频标题和发布日期，写入 report frontmatter。
+    不修改正文主体，不调用 LLM。
+    """
+    from podcast_research.config import OBSIDIAN_VAULT_PATH
+    from podcast_research.workspace import polish_report_metadata
+
+    vault_path_str = vault or OBSIDIAN_VAULT_PATH
+    if not vault_path_str:
+        console.print("[red]请指定 --vault 路径或在 .env 中配置 OBSIDIAN_VAULT_PATH[/red]")
+        raise typer.Exit(code=1)
+    vault_path = Path(vault_path_str)
+    if not vault_path.exists():
+        console.print(f"[red]Vault 路径不存在: {vault_path}[/red]")
+        raise typer.Exit(code=1)
+    if not dry_run and not apply:
+        console.print("[red]请指定 --dry-run 或 --apply[/red]")
+        raise typer.Exit(code=1)
+
+    if dry_run:
+        console.print(f"[dim][DRY-RUN] Vault: {vault_path}[/dim]")
+
+    result = polish_report_metadata(vault_path=vault_path, dry_run=dry_run, apply=apply, overwrite_title=overwrite_title)
+    stats = result["stats"]
+
+    console.print(f"[green]Report Metadata Polish 完成[/green]")
+    console.print(f"  Reports scanned: {stats['reports_scanned']}")
+    console.print(f"  Titles updated: {stats['titles_updated']}")
+    console.print(f"  Published dates updated: {stats['published_dates_updated']}")
+    console.print(f"  H1 fixed: {stats['h1_fixed']}")
+    console.print(f"  Display names updated: {stats['display_names_updated']}")
+
+    if dry_run:
+        for r in result["results"]:
+            if r.get("action") == "update_metadata":
+                parts = []
+                if r.get("suggested_title") != r.get("current_title"):
+                    parts.append(f"title: '{r['current_title']}' → '{r['suggested_title']}'")
+                if r.get("suggested_published") != r.get("current_published"):
+                    parts.append(f"published: '{r['current_published']}' → '{r['suggested_published']}'")
+                if r.get("h1_fixed"):
+                    parts.append("H1→title")
+                console.print(f"  [cyan]{r['filename']}[/cyan]: {', '.join(parts)}")
+
+
+@workspace_app.command("cleanup-long-tail-topics")
+def workspace_cleanup_long_tail_topics(
+    vault: str = typer.Option(None, "--vault", help="Obsidian Vault 路径（覆盖 .env 配置）"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="只预览不写入"),
+    apply: bool = typer.Option(False, "--apply", help="执行清理"),
+) -> None:
+    """清理 long-tail topic 命名规范化和去重。
+
+    应用 alias map 规范化缩写（如 Cicd→CI/CD），合并大小写重复。
+    旧文件移至 99_System/LongTail_Cleanup_Backup/，不删除。
+    """
+    from podcast_research.config import OBSIDIAN_VAULT_PATH
+    from podcast_research.workspace import cleanup_long_tail_topics
+
+    vault_path_str = vault or OBSIDIAN_VAULT_PATH
+    if not vault_path_str:
+        console.print("[red]请指定 --vault 路径或在 .env 中配置 OBSIDIAN_VAULT_PATH[/red]")
+        raise typer.Exit(code=1)
+    vault_path = Path(vault_path_str)
+    if not vault_path.exists():
+        console.print(f"[red]Vault 路径不存在: {vault_path}[/red]")
+        raise typer.Exit(code=1)
+    if not dry_run and not apply:
+        console.print("[red]请指定 --dry-run 或 --apply[/red]")
+        raise typer.Exit(code=1)
+
+    if dry_run:
+        console.print(f"[dim][DRY-RUN] Vault: {vault_path}[/dim]")
+
+    result = cleanup_long_tail_topics(vault_path=vault_path, dry_run=dry_run, apply=apply)
+    stats = result["stats"]
+
+    console.print(f"[green]Long-tail Topic Cleanup 完成[/green]")
+    console.print(f"  Topics scanned: {stats['topics_scanned']}")
+    console.print(f"  Renamed: {stats['renamed']}")
+    console.print(f"  Merged: {stats['merged']}")
+    console.print(f"  Quality tagged: {stats['quality_tagged']}")
+    console.print(f"  Manual review: {stats['manual_review']}")
+
+    if dry_run:
+        updated = [r for r in result["results"] if r["action"] != "skip"]
+        if updated:
+            console.print("\n[bold]Preview of changes:[/bold]")
+            for r in updated:
+                console.print(
+                    f"  [cyan]{r['current_name']}[/cyan] → "
+                    f"[green]{r['suggested_name']}[/green] "
+                    f"({r['action']}) — {r.get('reason', '')} "
+                    f"`quality: {r['quality']}`"
+                )
+        else:
+            console.print("[dim]No changes needed.[/dim]")
+
+
+@workspace_app.command("watchlist-brief")
+def workspace_watchlist_brief(
+    vault: str = typer.Option(None, "--vault", help="Obsidian Vault 路径"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="只预览不写入"),
+    apply: bool = typer.Option(False, "--apply", help="写入 Watchlist Brief.md"),
+) -> None:
+    """生成 Watchlist Brief 并写入 99_System/Watchlist Brief.md。"""
+    from podcast_research.config import OBSIDIAN_VAULT_PATH
+    from podcast_research.workspace.scanner import VaultScanner
+    from podcast_research.workspace.watchlist import (
+        load_watchlist, ensure_watchlist_template,
+        generate_watchlist_brief, render_watchlist_markdown, write_watchlist_brief,
+    )
+
+    vault_path_str = vault or OBSIDIAN_VAULT_PATH
+    if not vault_path_str:
+        console.print("[red]请指定 --vault 路径[/red]")
+        raise typer.Exit(code=1)
+    vp = Path(vault_path_str)
+    if not vp.exists():
+        console.print(f"[red]Vault 路径不存在: {vp}[/red]")
+        raise typer.Exit(code=1)
+
+    config = load_watchlist(vp)
+    if not config.companies and not config.topics:
+        console.print("[yellow]Watchlist.yaml 为空或不存在，已生成模板[/yellow]")
+        ensure_watchlist_template(vp)
+        if not dry_run and not apply:
+            return
+
+    scanner = VaultScanner(vp)
+    snapshot = scanner.scan()
+    brief = generate_watchlist_brief(snapshot, vp)
+
+    if dry_run:
+        console.print(f"\n[bold]Watchlist Brief Preview[/bold]\n")
+        for item in brief:
+            icon = {"direct": "●", "indirect": "◐", "no_new_evidence": "○"}.get(item.status, "○")
+            console.print(f"  {icon} [cyan]{item.name}[/cyan] ({item.item_type}): {item.summary[:100]}")
+        return
+
+    if apply:
+        md = render_watchlist_markdown(brief)
+        path = write_watchlist_brief(vp, md)
+        console.print(f"[green]已写入: {path}[/green]")
+
+
 # --- claims / signals 子命令组 ---
 claims_app = typer.Typer(help="Claim 卡片管理")
 app.add_typer(claims_app, name="claims")

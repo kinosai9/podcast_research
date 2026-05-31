@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}添加新内容 — 投资音视频研究助手{% endblock %}
+{% block content %}
+
+{% if flash_msg %}
+<div class="alert alert-{{ flash_type }}">{{ flash_msg }}</div>
+{% endif %}
+
+<a href="/dashboard" class="back-link">&larr; 返回首页</a>
+
+<h2 class="page-title">添加新内容</h2>
+<p class="page-desc">粘贴一个 YouTube 视频链接，AI 会提取字幕并整理成研究报告。</p>
+
+<div class="section-card">
+    <form method="post" action="/content/analyze" class="content-form">
+        <div class="form-group">
+            <label class="form-label" for="youtube_url">YouTube 链接</label>
+            <input type="text" id="youtube_url" name="youtube_url"
+                   placeholder="https://www.youtube.com/watch?v=..."
+                   class="form-input" required autofocus>
+            <p class="form-help">支持标准 YouTube 视频链接（youtube.com/watch?v= 或 youtu.be/）</p>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="focus">关注方向</label>
+            <input type="text" id="focus" name="focus"
+                   placeholder="AI Agents, Enterprise AI, Semiconductor"
+                   value="{{ focus_suggestions|join(', ') if focus_suggestions else '' }}"
+                   class="form-input">
+            <p class="form-help">用逗号分隔多个方向。从你的关注列表预填。</p>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="depth">分析深度</label>
+            <select id="depth" name="depth" class="form-input">
+                <option value="standard">标准</option>
+                <option value="deep">深度</option>
+            </select>
+            <p class="form-help">标准模式适合大多数视频；深度模式分析更细致但耗时较长。</p>
+        </div>
+
+        <div class="form-group">
+            <label class="form-checkbox">
+                <input type="checkbox" name="mock_mode" value="true">
+                <span>测试模式（不调用 AI，快速验证链接和字幕可用性）</span>
+            </label>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn-action">开始整理</button>
+            <a href="/dashboard" class="btn-action btn-secondary">取消</a>
+        </div>
+    </form>
+</div>
+
+{% endblock %}

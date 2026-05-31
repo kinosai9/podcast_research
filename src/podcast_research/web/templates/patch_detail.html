@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}AI 整理建议 — {{ patch.target if patch else patch_id }}{% endblock %}
+{% block content %}
+
+{% if flash_msg %}
+<div class="alert alert-{{ flash_type }}">{{ flash_msg }}</div>
+{% endif %}
+
+<a href="/dashboard" class="back-link">&larr; 返回首页</a>
+
+{% if not vault_configured %}
+<div class="empty-state"><p>Vault 未配置。</p></div>
+{% elif not_found %}
+<div class="error-page"><h2>404</h2><p>该建议不存在或已被处理: {{ patch_id }}</p></div>
+{% elif patch %}
+
+<div class="report-hero">
+    <h2>{{ patch.target }} — AI 整理建议</h2>
+    <div class="meta-row">
+        <span class="tag tag-{{ patch.target_type }}">{{ patch.target_type }}</span>
+        <span>生成时间: {{ patch.generated_at }}</span>
+    </div>
+</div>
+
+<dl class="detail-grid">
+    <dt>目标卡片</dt>
+    <dd><code>{{ patch.target_card }}</code></dd>
+    <dt>参考报告</dt>
+    <dd>
+        {% for sr in patch.source_reports %}
+        <span class="tag">{{ sr }}</span>
+        {% endfor %}
+    </dd>
+</dl>
+
+{% if patch.status in ('pending_review', 'approved') %}
+<div class="section-card" style="margin-bottom:20px">
+    <h2>确认操作</h2>
+    <p style="font-size:0.82rem;color:var(--muted);margin-bottom:12px">
+        采纳后，AI 的建议内容将追加到目标卡片中，不会覆盖你已有的内容。
+    </p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <form method="post" action="/patches/{{ patch.patch_id }}/apply">
+            <button type="submit" class="btn-action" onclick="return confirm('确认采纳这份 AI 整理建议？内容将追加到 {{ patch.target_card }}')">采纳</button>
+        </form>
+        <form method="post" action="/patches/{{ patch.patch_id }}/reject">
+            <input type="hidden" name="reason" value="user skipped from console">
+            <button type="submit" class="btn-action btn-danger">暂不采纳</button>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<div class="section-card">
+    <h2>建议内容</h2>
+    <div class="markdown-body">{{ patch.body }}</div>
+</div>
+
+{% endif %}
+{% endblock %}

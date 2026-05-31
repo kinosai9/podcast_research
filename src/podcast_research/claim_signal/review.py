@@ -24,6 +24,17 @@ VALID_SIGNAL_TYPES = {
 }
 
 
+def _safe_read_text(path: Path) -> str:
+    """Read a file with encoding fallback: UTF-8 -> GBK -> UTF-8 replace."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        try:
+            return path.read_text(encoding="gbk")
+        except Exception:
+            return path.read_text(encoding="utf-8", errors="replace")
+
+
 @dataclass
 class ClaimInfo:
     """Lightweight claim card info for listing."""
@@ -425,7 +436,7 @@ def _write_claim_review_log(vault_path: Path, claim_id: str, status: str, note: 
     entry += "\n"
 
     if log_path.exists():
-        existing = log_path.read_text(encoding="utf-8")
+        existing = _safe_read_text(log_path)
         header = "# Claim Review Log"
         if header in existing:
             existing = existing.replace(header + "\n\n", header + "\n\n" + entry)
@@ -449,7 +460,7 @@ def _write_signal_review_log(vault_path: Path, signal_id: str, status: str, note
     entry += "\n"
 
     if log_path.exists():
-        existing = log_path.read_text(encoding="utf-8")
+        existing = _safe_read_text(log_path)
         header = "# Signal Review Log"
         if header in existing:
             existing = existing.replace(header + "\n\n", header + "\n\n" + entry)
@@ -956,7 +967,7 @@ def _write_signal_tracking_log(vault_path: Path, signal_id: str, action: str, de
     entry = f"## {now}\n\n- **Signal**: [[../07_Signals/{signal_id}]]\n- **Action**: {action}\n- **Detail**: {detail}\n\n"
 
     if log_path.exists():
-        existing = log_path.read_text(encoding="utf-8")
+        existing = _safe_read_text(log_path)
         header = "# Signal Tracking Log"
         if header in existing:
             existing = existing.replace(header + "\n\n", header + "\n\n" + entry)

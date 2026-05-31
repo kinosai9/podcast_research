@@ -9,10 +9,15 @@
 <body>
     <header class="site-header">
         <div class="container">
-            <h1><a href="/">投资音视频研究助手</a></h1>
+            <div class="site-brand">
+                <h1><a href="/">投资音视频研究助手</a></h1>
+                <span class="subtitle">Local Research Console</span>
+            </div>
             <nav class="site-nav">
-                <a href="/reports">报告库</a>
-                <a href="/search">搜索</a>
+                {% set current = request.url.path %}
+                <a href="/dashboard"{% if current == '/dashboard' %} class="active"{% endif %}>控制台</a>
+                <a href="/reports"{% if current.startswith('/reports') %} class="active"{% endif %}>报告库</a>
+                <a href="/search"{% if current == '/search' %} class="active"{% endif %}>搜索</a>
                 <a href="/docs">API Docs</a>
             </nav>
         </div>

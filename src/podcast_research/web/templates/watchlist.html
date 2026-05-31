@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}我的关注 — 投资音视频研究助手{% endblock %}
+{% block content %}
+
+{% if flash_msg %}
+<div class="alert alert-{{ flash_type }}">{{ flash_msg }}</div>
+{% endif %}
+
+<a href="/dashboard" class="back-link">&larr; 返回首页</a>
+
+<h2 class="page-title">我的关注</h2>
+<p class="page-desc">基于你在 Watchlist.yaml 中配置的关注对象，自动生成每个对象的更新简报。 <a href="/watchlist/settings">管理关注对象 →</a></p>
+
+{% if not vault_configured %}
+<div class="empty-state"><p>Vault 未配置。</p></div>
+
+{% elif config_created %}
+<div class="section-card">
+    <p style="font-size:0.88rem">系统已在 <code>99_System/Watchlist.yaml</code> 生成配置文件模板。编辑该文件填写你关注的公司、主题或方向，然后刷新本页。</p>
+</div>
+
+{% elif error %}
+<div class="error-page"><h2>生成失败</h2><p>{{ error }}</p></div>
+
+{% elif not config_exists %}
+<div class="empty-state">
+    <p>配置文件 <code>99_System/Watchlist.yaml</code> 不存在。</p>
+</div>
+
+{% elif not items %}
+<div class="empty-state">
+    <p>关注列表为空。请在 <code>99_System/Watchlist.yaml</code> 中添加关注对象。</p>
+</div>
+
+{% else %}
+
+{% set companies = items | selectattr('item_type', 'equalto', 'company') | list %}
+{% set topics = items | selectattr('item_type', 'equalto', 'topic') | list %}
+{% set themes = items | selectattr('item_type', 'equalto', 'theme') | list %}
+
+{% if companies %}
+<div class="section-card">
+    <h2>公司</h2>
+    {% for item in companies %}
+    <div class="wl-detail">
+        <h3>
+            <span class="wl-status wl-{{ item.status }}">{{ {'direct': '●', 'indirect': '◐', 'no_new_evidence': '○'}.get(item.status, '○') }}</span>
+            {{ item.name }}
+            {% if not item.card_exists %}<span class="tag" style="background:var(--danger-soft);color:var(--danger)">未找到卡片</span>{% endif %}
+        </h3>
+        <p class="wl-summary">{{ item.summary }}</p>
+
+        {% if item.direct_items %}
+        <p style="font-size:0.8rem;color:var(--muted);margin:8px 0 4px">直接相关:</p>
+        <ul class="brief-list">
+            {% for d in item.direct_items[:3] %}<li>{{ d }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if item.indirect_items %}
+        <p style="font-size:0.8rem;color:var(--muted);margin:8px 0 4px">间接相关:</p>
+        <ul class="brief-list">
+            {% for d in item.indirect_items[:3] %}<li>{{ d }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if item.observations %}
+        <p style="font-size:0.8rem;color:var(--muted);margin:8px 0 4px">待观察 ({{ item.observation_count }}):</p>
+        <ul class="brief-list">
+            {% for o in item.observations[:3] %}<li>{{ o }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+{% if topics %}
+<div class="section-card">
+    <h2>主题</h2>
+    {% for item in topics %}
+    <div class="wl-detail">
+        <h3>
+            <span class="wl-status wl-{{ item.status }}">{{ {'direct': '●', 'indirect': '◐', 'no_new_evidence': '○'}.get(item.status, '○') }}</span>
+            {{ item.name }}
+            {% if not item.card_exists %}<span class="tag" style="background:var(--danger-soft);color:var(--danger)">未找到卡片</span>{% endif %}
+        </h3>
+        <p class="wl-summary">{{ item.summary }}</p>
+
+        {% if item.direct_items %}
+        <p style="font-size:0.8rem;color:var(--muted);margin:8px 0 4px">直接相关:</p>
+        <ul class="brief-list">
+            {% for d in item.direct_items[:3] %}<li>{{ d }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if item.observations %}
+        <p style="font-size:0.8rem;color:var(--muted);margin:8px 0 4px">待观察 ({{ item.observation_count }}):</p>
+        <ul class="brief-list">
+            {% for o in item.observations[:3] %}<li>{{ o }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+{% if themes %}
+<div class="section-card">
+    <h2>方向</h2>
+    {% for item in themes %}
+    <div class="wl-detail">
+        <h3><span class="wl-status wl-no_new_evidence">○</span> {{ item.name }}</h3>
+        <p class="wl-summary">{{ item.summary }}</p>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}

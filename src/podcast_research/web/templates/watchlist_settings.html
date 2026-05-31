@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}关注设置 — 投资音视频研究助手{% endblock %}
+{% block content %}
+
+{% if flash_msg %}
+<div class="alert alert-{{ flash_type }}">{{ flash_msg }}</div>
+{% endif %}
+
+<a href="/watchlist" class="back-link">&larr; 返回我的关注</a>
+
+<h2 class="page-title">我的关注设置</h2>
+<p class="page-desc">添加关注的公司、主题或方向。系统会自动识别简称、别名和拼写变体。</p>
+
+{% if not vault_configured %}
+<div class="empty-state"><p>Vault 未配置。</p></div>
+{% elif not config %}
+<div class="empty-state"><p>配置文件加载失败。</p></div>
+{% else %}
+
+<!-- Companies -->
+<div class="section-card">
+    <h2>关注公司</h2>
+    {% if resolved_items %}
+    {% set companies = resolved_items | selectattr('type', 'equalto', 'company') | list %}
+    {% if companies %}
+    <table class="dash-table" style="margin-bottom:12px">
+        <thead><tr><th>公司</th><th>识别</th><th></th></tr></thead>
+        <tbody>
+        {% for item in companies %}
+        <tr>
+            <td class="name">{{ item.name }}</td>
+            <td>
+                {% if item.match_status == 'linked' %}
+                <span class="tag tag-curation-indexed">已关联</span>
+                {% elif item.match_status in ('alias', 'fuzzy') %}
+                <span class="tag" style="background:var(--accent-soft);color:var(--accent)">{{ item.canonical_name }}</span>
+                {% else %}
+                <span class="tag" style="background:var(--warning-soft);color:var(--warning)">未找到知识卡</span>
+                {% endif %}
+            </td>
+            <td class="actions-cell">
+                <form method="post" action="/watchlist/settings/remove" class="inline-form">
+                    <input type="hidden" name="item_type" value="company">
+                    <input type="hidden" name="name" value="{{ item.name }}">
+                    <button type="submit" class="btn-sm btn-sm-no">移除</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    {% endif %}
+
+    <form method="post" action="/watchlist/settings/add" class="add-form">
+        <input type="hidden" name="item_type" value="company">
+        <input type="text" name="name" placeholder="公司名称，如 OpenAI / 英伟达" required>
+        <button type="submit" class="btn-action btn-sm-action">添加</button>
+    </form>
+
+    {% if suggested_companies %}
+    <p style="font-size:0.76rem;color:var(--muted);margin-top:10px">推荐:
+        {% for s in suggested_companies[:8] %}
+        <a href="#" onclick="this.closest('form').querySelector('input').value='{{ s }}';return false" style="margin-right:6px">{{ s }}</a>
+        {% endfor %}
+    </p>
+    {% endif %}
+</div>
+
+<!-- Topics -->
+<div class="section-card">
+    <h2>关注主题</h2>
+    {% if resolved_items %}
+    {% set topics = resolved_items | selectattr('type', 'equalto', 'topic') | list %}
+    {% if topics %}
+    <table class="dash-table" style="margin-bottom:12px">
+        <thead><tr><th>主题</th><th>识别</th><th></th></tr></thead>
+        <tbody>
+        {% for item in topics %}
+        <tr>
+            <td class="name">{{ item.name }}</td>
+            <td>
+                {% if item.match_status == 'linked' %}
+                <span class="tag tag-curation-indexed">已关联</span>
+                {% elif item.match_status in ('alias', 'fuzzy') %}
+                <span class="tag" style="background:var(--accent-soft);color:var(--accent)">{{ item.canonical_name }}</span>
+                {% else %}
+                <span class="tag" style="background:var(--warning-soft);color:var(--warning)">未找到知识卡</span>
+                {% endif %}
+            </td>
+            <td class="actions-cell">
+                <form method="post" action="/watchlist/settings/remove" class="inline-form">
+                    <input type="hidden" name="item_type" value="topic">
+                    <input type="hidden" name="name" value="{{ item.name }}">
+                    <button type="submit" class="btn-sm btn-sm-no">移除</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    {% endif %}
+
+    <form method="post" action="/watchlist/settings/add" class="add-form">
+        <input type="hidden" name="item_type" value="topic">
+        <input type="text" name="name" placeholder="主题名称，如 AI Agents / AI Agent" required>
+        <button type="submit" class="btn-action btn-sm-action">添加</button>
+    </form>
+
+    {% if suggested_topics %}
+    <p style="font-size:0.76rem;color:var(--muted);margin-top:10px">推荐:
+        {% for s in suggested_topics[:8] %}
+        <a href="#" style="margin-right:6px" onclick="this.closest('.section-card').querySelector('input').value='{{ s }}';return false">{{ s }}</a>
+        {% endfor %}
+    </p>
+    {% endif %}
+</div>
+
+<!-- Themes -->
+<div class="section-card">
+    <h2>关注方向</h2>
+    {% if resolved_items %}
+    {% set themes = resolved_items | selectattr('type', 'equalto', 'theme') | list %}
+    {% if themes %}
+    <table class="dash-table" style="margin-bottom:12px">
+        <thead><tr><th>方向</th><th>关联主题</th><th></th></tr></thead>
+        <tbody>
+        {% for item in themes %}
+        <tr>
+            <td class="name">{{ item.name }}</td>
+            <td>
+                {% if item.related_topics %}
+                <span class="tag" style="background:var(--info-soft);color:var(--info)">{{ item.related_topics|length }} 个主题</span>
+                {% else %}
+                <span class="tag">自定义</span>
+                {% endif %}
+            </td>
+            <td class="actions-cell">
+                <form method="post" action="/watchlist/settings/remove" class="inline-form">
+                    <input type="hidden" name="item_type" value="theme">
+                    <input type="hidden" name="name" value="{{ item.name }}">
+                    <button type="submit" class="btn-sm btn-sm-no">移除</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    {% endif %}
+
+    <form method="post" action="/watchlist/settings/add" class="add-form">
+        <input type="hidden" name="item_type" value="theme">
+        <input type="text" name="name" placeholder="方向名称，如 Agent 工具链" required>
+        <button type="submit" class="btn-action btn-sm-action">添加</button>
+    </form>
+</div>
+
+<p style="font-size:0.72rem;color:var(--muted);margin-top:16px">配置文件: <code>99_System/Watchlist.yaml</code></p>
+
+{% endif %}
+{% endblock %}

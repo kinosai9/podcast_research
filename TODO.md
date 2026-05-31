@@ -603,6 +603,34 @@
 
 ---
 
+## P2-H.1：Obsidian Home Dashboard & Knowledge Workspace Hardening
+
+> 当前阶段。从 Vault 文件系统扫描所有卡片和报告，生成面向使用者的导航和审阅
+> 聚合页。不新增数据源，不调用 LLM，不自动修改卡片内容。
+
+- [x] `workspace/managed_block.py` — managed block 插入/更新/删除工具
+- [x] `workspace/scanner.py` — VaultScanner + WorkspaceSnapshot + 7 种 Info dataclasses
+- [x] `workspace/generators.py` — Home.md / Knowledge Map / Review Queue 生成器
+- [x] `workspace/__init__.py` — refresh_workspace() orchestrator
+- [x] CLI: `obsidian workspace refresh` --vault / --dry-run / --home-only / --knowledge-map-only / --review-queue-only
+- [x] 46 tests: managed block (8) + scanner (12) + generators (12) + integration (8) + CLI (6)
+- [x] 618 tests total (572 existing + 46 new)
+
+### P2-H.2 Navigation / Curation Status Cleanup
+
+- [x] `workspace/backfill.py` — relation backfill: related_topics / related_companies 回填
+- [x] `workspace/curation.py` — curation_status refresh: raw / indexed / reviewed / enhanced / archived
+- [x] Scanner 增强: curation_status 字段 + curation_summary()
+- [x] Generator 增强: Curation 列 + Review Queue Top-10 限制
+- [x] CLI: `workspace backfill-relations` + `workspace refresh-curation-status`
+- [x] 25 tests: backfill (9) + curation (7) + scanner (2) + generators (4) + CLI (3)
+- [x] 643 tests total (618 existing + 25 new)
+
+后续任务：
+- P2-H.3: Long-tail cleanup or Source report title/metadata polish
+
+---
+
 ## P2：真实 LLM + 小宇宙可选 Adapter
 
 - [ ] 真实 LLM provider（OpenAI-compatible）完整接入与 prompt 调优

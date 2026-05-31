@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}AI 整理建议 — 投资音视频研究助手{% endblock %}
+{% block content %}
+
+{% if flash_msg %}
+<div class="alert alert-{{ flash_type }}">{{ flash_msg }}</div>
+{% endif %}
+
+<a href="/dashboard" class="back-link">&larr; 返回首页</a>
+
+<h2 class="page-title">AI 整理建议</h2>
+<p class="page-desc">AI 从最新报告中提取的内容整理建议。审阅后可选择采纳或暂不采纳。</p>
+
+{% if not vault_configured %}
+<div class="empty-state"><p>Vault 未配置。</p></div>
+{% elif not patches %}
+<div class="empty-state"><p>暂无 AI 整理建议。分析更多报告后，AI 将自动生成建议。</p></div>
+{% else %}
+<table class="report-table">
+    <thead>
+        <tr>
+            <th>主题</th>
+            <th>类型</th>
+            <th>状态</th>
+            <th>日期</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for p in patches %}
+        <tr>
+            <td class="name">{{ p.target }}</td>
+            <td><span class="tag tag-{{ p.target_type }}">{{ p.target_type }}</span></td>
+            <td><span class="tag tag-{{ p.status }}">{{ p.status }}</span></td>
+            <td>{{ p.generated_at }}</td>
+            <td><a href="/patches/{{ p.patch_id }}" class="btn-sm">查看</a></td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+{% endblock %}

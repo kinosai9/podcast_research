@@ -195,7 +195,7 @@ def search_fts(session: Session, keyword: str, limit: int = 20) -> list[dict] | 
         rows = session.execute(
             text(
                 f"SELECT report_id, title, source_type, video_id,"
-                f"  snippet({FTS_TABLE}, 2, '<mark>', '</mark>', '', 48) AS excerpt,"
+                f"  snippet({FTS_TABLE}, -1, '<mark>', '</mark>', '', 500) AS excerpt,"
                 f"  rank AS score"
                 f" FROM {FTS_TABLE}"
                 f" WHERE {FTS_TABLE} MATCH :kw"
@@ -248,13 +248,12 @@ def _escape_fts_query(keyword: str) -> str:
     return " AND ".join(terms)
 
 
-def _clean_fts_excerpt(text: str) -> str:
-    """清理 FTS snippet 输出的标记，确保终端安全。"""
+def _clean_fts_excerpt(text: str, strip_marks: bool = False) -> str:
+    """Clean FTS snippet output — normalises whitespace, optionally strips <mark>."""
     import re
 
-    text = re.sub(r"<mark>|</mark>", "", text)
+    if strip_marks:
+        text = re.sub(r"<mark>|</mark>", "", text)
     text = "".join(c for c in text if ord(c) <= 0xFFFF)
     text = re.sub(r"\s+", " ", text).strip()
-    if len(text) > 80:
-        text = text[:80] + "..."
     return text

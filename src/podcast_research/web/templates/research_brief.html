@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}研究简报 — 投资音视频研究助手{% endblock %}
+{% block content %}
+
+{% if flash_msg %}
+<div class="alert alert-{{ flash_type }}">{{ flash_msg }}</div>
+{% endif %}
+
+<a href="/dashboard" class="back-link">&larr; 返回首页</a>
+
+<h2 class="page-title">研究简报</h2>
+<p class="page-desc">基于知识库图谱自动生成的研究摘要，不依赖 AI 生成，所有数据来自已分析报告。</p>
+
+{% if not vault_configured %}
+<div class="empty-state"><p>Vault 未配置。</p></div>
+{% elif error %}
+<div class="error-page"><h2>生成失败</h2><p>{{ error }}</p></div>
+{% elif brief %}
+
+<div class="section-card">
+    <h2>研究摘要</h2>
+    {% for bullet in brief.summary %}
+    <p class="brief-bullet">{{ bullet }}</p>
+    {% endfor %}
+    <p style="font-size:0.72rem;color:var(--muted);margin-top:12px">生成时间: {{ brief.generated_at }} &middot; 基于 {{ brief.total_reports }} 份报告、{{ brief.total_claims }} 条判断、{{ brief.total_signals }} 个观察点</p>
+</div>
+
+{% if watchlist_items %}
+<div class="section-card">
+    <h2>我的关注<a href="/watchlist" style="font-size:0.78rem;font-weight:400;margin-left:8px">完整简报 →</a></h2>
+    {% for item in watchlist_items[:5] %}
+    <div class="wl-item">
+        <span class="wl-status wl-{{ item.status }}">{{ {'direct': '●', 'indirect': '◐', 'no_new_evidence': '○'}.get(item.status, '○') }}</span>
+        <div class="wl-body">
+            <strong>{{ item.name }}</strong>
+            <span class="tag" style="font-size:0.68rem">{{ {'company': '公司', 'topic': '主题', 'theme': '方向'}.get(item.item_type, '') }}</span>
+            <p style="font-size:0.82rem;color:var(--text-soft);margin:2px 0 0">{{ item.summary }}</p>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+{% if brief.active_topics %}
+<div class="section-card">
+    <h2>升温主题</h2>
+    <table class="dash-table">
+        <thead><tr><th>主题</th><th class="num">报告</th><th class="num">判断</th><th class="num">观察</th></tr></thead>
+        <tbody>
+        {% for t in brief.active_topics %}
+        <tr>
+            <td class="name">{{ t.name }}</td>
+            <td class="num">{{ t.reports }}</td>
+            <td class="num">{{ t.claims }}</td>
+            <td class="num">{{ t.signals }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if brief.active_companies %}
+<div class="section-card">
+    <h2>值得关注的公司</h2>
+    <table class="dash-table">
+        <thead><tr><th>公司</th><th class="num">报告</th><th class="num">判断</th><th class="num">观察</th></tr></thead>
+        <tbody>
+        {% for c in brief.active_companies %}
+        <tr>
+            <td class="name">{{ c.name }}</td>
+            <td class="num">{{ c.reports }}</td>
+            <td class="num">{{ c.claims }}</td>
+            <td class="num">{{ c.signals }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if brief.reinforced_claims %}
+<div class="section-card">
+    <h2>被多份报告交叉验证的判断</h2>
+    <ul class="brief-list">
+        {% for c in brief.reinforced_claims %}
+        <li>{{ c }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if brief.new_signals %}
+<div class="section-card">
+    <h2>新增观察点</h2>
+    <ul class="brief-list">
+        {% for s in brief.new_signals %}
+        <li>{{ s }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if brief.recommended_reports %}
+<div class="section-card">
+    <h2>推荐阅读</h2>
+    <ul class="brief-list">
+        {% for r in brief.recommended_reports %}
+        <li>{{ r.channel }} — {{ r.title }} <a href="/reports" class="btn-sm" style="margin-left:8px">在报告库中查看</a></li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% else %}
+<div class="empty-state"><p>暂无研究简报。更新知识库后将自动生成。</p></div>
+{% endif %}
+
+{% endblock %}

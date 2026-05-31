@@ -14,7 +14,19 @@
 
 ## 当前阶段
 
-P2-F.3（Signal Tracking Schema & Manual Update Workflow）已完成。P0-A 到 P2-F.3 全部交付，572 tests。
+P2-J.2（Watchlist Brief）。P0-A 到 P2-J.1 全部交付，683 tests。
+
+**当前重点：提升 Obsidian 可用性，不新增外部数据源。**
+
+**P2-H.1 新增：**
+
+`obsidian workspace refresh` — 扫描 Vault 文件系统，生成 Home.md、99_System/Knowledge Map.md、99_System/Review Queue.md 三个导航/聚合页。不调用 LLM，不连接外部 API，使用 managed block 模式不覆盖用户手工内容。
+
+**P2-H.2 新增：**
+
+`obsidian workspace backfill-relations` — 回填 Claim/Signal 的 related_topics / related_companies 关联。
+`obsidian workspace refresh-curation-status` — 为所有卡片添加 curation_status 字段（raw/indexed/reviewed/enhanced/archived）。
+Review Queue 聚焦 Top-10，Home/Knowledge Map 增加 Curation 列。
 
 **P0 已跑通：**
 
