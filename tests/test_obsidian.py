@@ -770,19 +770,22 @@ def test_channel_filter_partial_match(seeded_db, tmp_path):
 
 
 def test_unknown_channel_default_still_exports(seeded_db, tmp_path):
-    """默认行为：UnknownChannel 仍可导出，保证兼容。"""
+    """P2-L.2: UnknownChannel 不再作为默认 fallback，改用 YouTube_{video_id}。"""
     from podcast_research.exporters.obsidian import export_to_vault
 
     vault = tmp_path / "vault"
     vault.mkdir()
 
-    # No channel info, no filters → should export as UnknownChannel
+    # No channel info, no filters → should export with YouTube_{video_id} fallback
     result = export_to_vault(vault, source_type="youtube")
 
     assert result["created"] >= 1
-    # Check that file was created with UnknownChannel in filename
-    reports = list((vault / "01_Reports").glob("*UnknownChannel*"))
+    # Check that file exists (no longer uses UnknownChannel as fallback)
+    reports = list((vault / "01_Reports").glob("*.md"))
     assert len(reports) >= 1
+    # UnknownChannel should NOT appear in filename
+    unknown = list((vault / "01_Reports").glob("*UnknownChannel*"))
+    assert len(unknown) == 0, "UnknownChannel should not be used as default fallback"
 
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -149,9 +149,10 @@ def test_chunk_text_has_header():
     segs = _make_segments(80, chars_per_seg=200)
     chunks = chunk_transcript(segs, char_limit=3000, overlap_chars=200)
     for c in chunks:
-        assert "Chunk" in c.text
+        # Chinese header format: [第 N/M 段, 时间范围 HH:MM:SS-HH:MM:SS]
+        assert "段" in c.text  # 表明有中文分段信息
+        assert "时间范围" in c.text
         assert f"{c.chunk_id}/{c.chunk_count}" in c.text
-        assert "timestamp range" in c.text
 
 
 def test_chunk_segments_text_format():

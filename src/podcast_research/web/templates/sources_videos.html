@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}信息源 — {{ channel.name }} 视频列表{% endblock %}
+{% block content %}
+
+{% if flash_msg %}
+<div class="alert alert-{{ flash_type }}">{{ flash_msg }}</div>
+{% endif %}
+
+<div class="page-header">
+    <h2>{{ channel.name or channel.youtube_channel_id }}</h2>
+    <p class="subtitle">
+        <span class="badge badge-{{ channel.priority }}">{{ priority_labels.get(channel.priority, channel.priority) }}</span>
+        {% if channel.default_focus %} · {{ channel.default_focus }}{% endif %}
+        {% if channel.url %} · <a href="{{ channel.url }}" target="_blank" rel="noopener">YouTube 频道</a>{% endif %}
+    </p>
+</div>
+
+<!-- ── Actions ── -->
+<div class="action-bar" style="margin-bottom:16px">
+    <form method="post" action="/sources/channels/{{ channel.id }}/refresh" style="display:inline">
+        <button type="submit" class="btn-action">刷新视频列表</button>
+    </form>
+    <a href="/sources/channels" class="btn-action btn-secondary">返回频道列表</a>
+    <a href="/content/new" class="btn-action btn-secondary">直接分析视频</a>
+</div>
+
+<!-- ── Video List ── -->
+{% if videos %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>标题</th>
+            <th>发布时间</th>
+            <th>时长</th>
+            <th>状态</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for v in videos %}
+        <tr>
+            <td>
+                <strong>{{ v.title or '无标题' }}</strong>
+                <br><small>{{ v.video_id }}</small>
+            </td>
+            <td>{{ v.published_at or '-' }}</td>
+            <td>
+                {% if v.duration_seconds > 0 %}
+                {{ (v.duration_seconds // 60)|int }}:{{ '%02d' % (v.duration_seconds % 60) }}
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>
+                <span class="badge badge-{{ v.import_status }}">{{ stage_labels.get(v.import_status, v.import_status) }}</span>
+            </td>
+            <td class="actions">
+                {% if v.import_status == 'new' %}
+                <form method="post" action="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/import" style="display:inline">
+                    <input type="hidden" name="focus" value="{{ channel.default_focus }}">
+                    <input type="hidden" name="depth" value="{{ channel.default_depth }}">
+                    <input type="hidden" name="flow_mode" value="full">
+                    <button type="submit" class="btn-action btn-sm">整理进知识库</button>
+                </form>
+                {% elif v.import_status == 'analyzed' %}
+                <form method="post" action="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/import" style="display:inline">
+                    <input type="hidden" name="focus" value="{{ channel.default_focus }}">
+                    <input type="hidden" name="depth" value="{{ channel.default_depth }}">
+                    <input type="hidden" name="flow_mode" value="sync">
+                    <button type="submit" class="btn-action btn-sm btn-secondary">同步到知识库</button>
+                </form>
+                {% elif v.import_status == 'synced' %}
+                <a href="/reports" class="btn-action btn-sm btn-secondary">查看报告</a>
+                {% elif v.import_status == 'skipped' %}
+                <span class="text-muted">已跳过</span>
+                {% elif v.import_status == 'failed' %}
+                <span class="text-error">失败</span>
+                {% else %}
+                <span class="text-muted">{{ stage_labels.get(v.import_status, v.import_status) }}</span>
+                {% endif %}
+
+                {% if v.import_status != 'skipped' %}
+                <form method="post" action="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/skip" style="display:inline;margin-left:4px">
+                    <button type="submit" class="btn-action btn-sm btn-secondary" style="font-size:0.7rem">跳过</button>
+                </form>
+                {% endif %}
+
+                {% if v.url %}
+                <a href="{{ v.url }}" target="_blank" rel="noopener" class="btn-action btn-sm btn-secondary" style="font-size:0.7rem">YouTube</a>
+                {% endif %}
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <p>该频道还没有视频。点击"刷新视频列表"获取最新视频。</p>
+</div>
+{% endif %}
+
+<div style="margin-top:24px">
+    <a href="/sources/channels" class="btn-action btn-secondary">返回频道列表</a>
+</div>
+
+{% endblock %}

@@ -72,9 +72,9 @@ def is_long_transcript(
 
 
 def _format_chunk_header(chunk: TranscriptChunk) -> str:
-    """为 chunk text 生成简短 header。"""
+    """为 chunk text 生成简短 header — 使用中文避免影响 LLM 输出语言。"""
     ts = f"{chunk.start_time}-{chunk.end_time}" if chunk.start_time else "N/A"
-    return f"[Chunk {chunk.chunk_id}/{chunk.chunk_count}, timestamp range {ts}]"
+    return f"[第 {chunk.chunk_id}/{chunk.chunk_count} 段, 时间范围 {ts}]"
 
 
 def chunk_transcript(
@@ -151,8 +151,8 @@ def chunk_transcript(
     for c in chunks:
         c.chunk_count = total
         # Fix placeholder "0" in header with actual count
-        old_header = f"Chunk {c.chunk_id}/0,"
-        new_header = f"Chunk {c.chunk_id}/{total},"
+        old_header = f"第 {c.chunk_id}/0 段"
+        new_header = f"第 {c.chunk_id}/{total} 段"
         c.text = c.text.replace(old_header, new_header)
 
     return chunks

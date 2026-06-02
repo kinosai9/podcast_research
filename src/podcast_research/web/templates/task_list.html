@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}整理任务 — 投资音视频研究助手{% endblock %}
+{% block content %}
+
+<h2 class="page-title">整理任务</h2>
+<p class="page-desc">查看所有正在进行和已完成的整理任务。服务重启后任务记录会被清空。</p>
+
+{% if flash_msg %}
+<div class="alert alert-{{ flash_type }}">{{ flash_msg }}</div>
+{% endif %}
+
+{% if not jobs %}
+<div class="empty-state">
+    <p>暂无整理任务。</p>
+    <a href="/content/new" class="btn-action" style="margin-top:12px">添加新内容</a>
+</div>
+{% else %}
+<table class="dash-table" style="width:100%">
+    <thead>
+        <tr>
+            <th>标题</th>
+            <th>类型</th>
+            <th>状态</th>
+            <th>当前阶段</th>
+            <th>已耗时</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for j in jobs %}
+        <tr>
+            <td class="name">
+                <a href="/tasks/{{ j.job_id }}">{{ j.title or j.job_id[:8] }}</a>
+            </td>
+            <td>
+                <span class="tag">{{ j.job_type_label }}</span>
+            </td>
+            <td>
+                {% if j.status == "success" %}
+                <span class="tag" style="background:var(--success);color:#fff">已完成</span>
+                {% elif j.status == "failed" %}
+                <span class="tag" style="background:var(--danger);color:#fff">失败</span>
+                {% elif j.status == "long_running" %}
+                <span class="tag" style="background:var(--accent);color:#fff">耗时较长</span>
+                {% elif j.status == "stale" %}
+                <span class="tag" style="background:var(--muted);color:#fff">无响应</span>
+                {% else %}
+                <span class="tag">整理中</span>
+                {% endif %}
+            </td>
+            <td style="font-size:0.82rem;color:var(--text-soft)">{{ j.stage_label }}</td>
+            <td style="font-size:0.78rem;color:var(--muted);white-space:nowrap">{{ j.elapsed_display }}</td>
+            <td>
+                <a href="/tasks/{{ j.job_id }}" class="btn-action btn-secondary" style="font-size:0.78rem;padding:4px 8px">查看进度</a>
+                {% if j.status == "success" and j.job_type == "analysis" and j.result_links.get("report") %}
+                <a href="{{ j.result_links.report }}" style="font-size:0.78rem;margin-left:4px">查看报告</a>
+                {% elif j.status == "success" and j.job_type == "sync" and j.result_links.get("brief") %}
+                <a href="{{ j.result_links.brief }}" style="font-size:0.78rem;margin-left:4px">研究摘要</a>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+<div style="margin-top:16px">
+    <a href="/content/new" class="btn-action">添加新内容</a>
+    <a href="/dashboard" class="btn-action btn-secondary">返回首页</a>
+</div>
+
+{% endblock %}

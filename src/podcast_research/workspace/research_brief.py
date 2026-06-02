@@ -114,6 +114,7 @@ def generate_brief(snapshot: WorkspaceSnapshot) -> ResearchBrief:
             "title": r.title or r.filename,
             "filename": r.filename,
             "channel": r.channel or "",
+            "video_id": r.video_id or "",
         })
     brief.recommended_reports = recs
 

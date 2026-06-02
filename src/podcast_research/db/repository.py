@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from pathlib import Path
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -485,3 +486,279 @@ def list_sources(session: Session) -> list[dict]:
             source_map[st] = {"source_type": st, "count": 0, "last_report_at": report.analysis_timestamp}
         source_map[st]["count"] += 1
     return list(source_map.values())
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# P2-M.1: Channel & ChannelVideo CRUD
+# ═════════════════════════════════════════════════════════════════════════════
+
+from podcast_research.db.models import Channel, ChannelVideo
+
+
+def upsert_channel(
+    session: Session,
+    youtube_channel_id: str,
+    name: str = "",
+    url: str = "",
+    tags: str = "[]",
+    priority: str = "watch",
+    default_focus: str = "",
+    default_depth: str = "standard",
+) -> int:
+    """Insert or update a channel by youtube_channel_id. Returns channel id."""
+    ch = session.query(Channel).filter_by(youtube_channel_id=youtube_channel_id).first()
+    if ch:
+        ch.name = name or ch.name
+        ch.url = url or ch.url
+        if tags and tags != "[]":
+            ch.tags = tags
+        if priority:
+            ch.priority = priority
+        if default_focus:
+            ch.default_focus = default_focus
+        if default_depth:
+            ch.default_depth = default_depth
+        ch.is_active = True
+        session.flush()
+        return ch.id
+    else:
+        ch = Channel(
+            youtube_channel_id=youtube_channel_id,
+            name=name,
+            url=url,
+            tags=tags,
+            priority=priority,
+            default_focus=default_focus,
+            default_depth=default_depth,
+            is_active=True,
+        )
+        session.add(ch)
+        session.flush()
+        return ch.id
+
+
+def list_channels(session: Session, active_only: bool = False) -> list[dict]:
+    """List all channels, optionally only active ones."""
+    q = session.query(Channel).order_by(Channel.added_at.desc())
+    if active_only:
+        q = q.filter_by(is_active=True)
+    results = []
+    for ch in q.all():
+        # Count videos per status
+        video_counts = {}
+        for row in session.query(
+            ChannelVideo.status, func.count(ChannelVideo.id)
+        ).filter_by(channel_id=ch.id).group_by(ChannelVideo.status).all():
+            video_counts[row[0]] = row[1]
+        results.append({
+            "id": ch.id,
+            "youtube_channel_id": ch.youtube_channel_id,
+            "name": ch.name,
+            "url": ch.url,
+            "tags": ch.tags,
+            "priority": ch.priority,
+            "default_focus": ch.default_focus,
+            "default_depth": ch.default_depth,
+            "is_active": ch.is_active,
+            "added_at": ch.added_at,
+            "last_refreshed_at": ch.last_refreshed_at,
+            "video_counts": video_counts,
+            "total_videos": sum(video_counts.values()),
+        })
+    return results
+
+
+def get_channel(session: Session, channel_id: int) -> dict | None:
+    """Get a single channel by id."""
+    ch = session.query(Channel).filter_by(id=channel_id).first()
+    if not ch:
+        return None
+    return {
+        "id": ch.id,
+        "youtube_channel_id": ch.youtube_channel_id,
+        "name": ch.name,
+        "url": ch.url,
+        "tags": ch.tags,
+        "priority": ch.priority,
+        "default_focus": ch.default_focus,
+        "default_depth": ch.default_depth,
+        "is_active": ch.is_active,
+        "last_refreshed_at": ch.last_refreshed_at,
+    }
+
+
+def upsert_channel_video(
+    session: Session,
+    channel_id: int,
+    video_id: str,
+    title: str = "",
+    url: str = "",
+    published_at: str = "",
+    duration_seconds: int = 0,
+) -> bool:
+    """Insert or update a channel_video row. Returns True if new, False if upserted."""
+    cv = session.query(ChannelVideo).filter_by(
+        channel_id=channel_id, video_id=video_id
+    ).first()
+    if cv:
+        cv.title = title or cv.title
+        cv.url = url or cv.url
+        cv.published_at = published_at or cv.published_at
+        if duration_seconds:
+            cv.duration_seconds = duration_seconds
+        cv.last_checked_at = datetime.now()
+        session.flush()
+        return False  # upserted
+    else:
+        cv = ChannelVideo(
+            channel_id=channel_id,
+            video_id=video_id,
+            title=title,
+            url=url,
+            published_at=published_at,
+            duration_seconds=duration_seconds,
+            status="new",
+            last_checked_at=datetime.now(),
+        )
+        session.add(cv)
+        session.flush()
+        return True  # new
+
+
+def list_channel_videos(
+    session: Session,
+    channel_id: int,
+    status_filter: str | None = None,
+    limit: int | None = None,
+) -> list[dict]:
+    """List videos for a channel, optionally filtered by status."""
+    q = session.query(ChannelVideo).filter_by(channel_id=channel_id)
+    if status_filter:
+        q = q.filter_by(status=status_filter)
+    q = q.order_by(ChannelVideo.published_at.desc())
+    if limit:
+        q = q.limit(limit)
+    return [
+        {
+            "id": cv.id,
+            "channel_id": cv.channel_id,
+            "video_id": cv.video_id,
+            "title": cv.title,
+            "url": cv.url,
+            "published_at": cv.published_at,
+            "duration_seconds": cv.duration_seconds,
+            "status": cv.status,
+            "report_id": cv.report_id,
+            "failure_reason": cv.failure_reason,
+            "last_checked_at": cv.last_checked_at,
+        }
+        for cv in q.all()
+    ]
+
+
+def update_channel_video_status(
+    session: Session,
+    channel_video_id: int,
+    status: str,
+    report_id: int | None = None,
+    failure_reason: str = "",
+) -> None:
+    """Update status and optionally report_id for a channel_video."""
+    cv = session.query(ChannelVideo).filter_by(id=channel_video_id).first()
+    if cv:
+        cv.status = status
+        cv.last_checked_at = datetime.now()
+        if report_id is not None:
+            cv.report_id = report_id
+        if failure_reason:
+            cv.failure_reason = failure_reason
+        session.flush()
+
+
+def get_channel_video_by_video_id(session: Session, video_id: str) -> dict | None:
+    """Get a channel_video row by video_id."""
+    cv = session.query(ChannelVideo).filter_by(video_id=video_id).first()
+    if not cv:
+        return None
+    return {
+        "id": cv.id,
+        "channel_id": cv.channel_id,
+        "video_id": cv.video_id,
+        "title": cv.title,
+        "url": cv.url,
+        "status": cv.status,
+        "report_id": cv.report_id,
+        "failure_reason": cv.failure_reason,
+    }
+
+
+def refresh_channel_timestamp(session: Session, channel_id: int) -> None:
+    """Update last_refreshed_at for a channel."""
+    ch = session.query(Channel).filter_by(id=channel_id).first()
+    if ch:
+        ch.last_refreshed_at = datetime.now()
+        session.flush()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# P2-M.1: Video import status detection
+# ═════════════════════════════════════════════════════════════════════════════
+
+def detect_video_import_status(
+    session: Session,
+    video_id: str,
+    vault_path: str | None = None,
+) -> str:
+    """Detect the import status of a video across DB + Obsidian Vault.
+
+    Checks:
+        1. channel_videos table → returns stored status if present
+        2. episodes.video_id → "analyzed"
+        3. Obsidian 01_Reports/ frontmatter.video_id → "synced"
+        4. Default → "new"
+
+    Returns one of: "new", "analyzed", "synced", "skipped", "failed"
+    """
+    # 1. Check channel_videos for stored status
+    cv = session.query(ChannelVideo).filter_by(video_id=video_id).first()
+    if cv:
+        if cv.status == "new" and cv.report_id is None:
+            # Check if it's actually been analyzed since added to channel_videos
+            ep = session.query(Episode).filter_by(video_id=video_id).first()
+            if ep:
+                report = session.query(Report).filter_by(episode_id=ep.id).first()
+                if report:
+                    return "analyzed"
+        return cv.status if cv.status != "new" else "new"
+
+    # 2. Check episodes table
+    ep = session.query(Episode).filter_by(video_id=video_id).first()
+    if ep:
+        report = session.query(Report).filter_by(episode_id=ep.id).first()
+        if report:
+            # Check if synced to vault
+            if vault_path:
+                reports_dir = Path(vault_path) / "01_Reports"
+                if reports_dir.exists():
+                    for rf in reports_dir.glob("*.md"):
+                        try:
+                            content = rf.read_text(encoding="utf-8")
+                            if f"video_id: {video_id}" in content:
+                                return "synced"
+                        except Exception:
+                            pass
+            return "analyzed"
+
+    # 3. Check Obsidian vault (even if DB was cleared)
+    if vault_path:
+        reports_dir = Path(vault_path) / "01_Reports"
+        if reports_dir.exists():
+            for rf in reports_dir.glob("*.md"):
+                try:
+                    content = rf.read_text(encoding="utf-8")
+                    if f"video_id: {video_id}" in content:
+                        return "synced"
+                except Exception:
+                    pass
+
+    return "new"

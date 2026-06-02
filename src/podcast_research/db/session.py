@@ -28,7 +28,7 @@ def _migrate_episodes_table(engine) -> None:
 
 
 def _migrate_channels_table(engine) -> None:
-    """为 channels 表补齐 P1-F 新增列（tags/priority/default_focus/limits/notes）。"""
+    """为 channels 表补齐 P1-F / P2-M.1 新增列。"""
     insp = inspect(engine)
     if "channels" not in insp.get_table_names():
         return
@@ -40,11 +40,30 @@ def _migrate_channels_table(engine) -> None:
         ("default_limit", "INTEGER DEFAULT 10"),
         ("default_max_analyze", "INTEGER DEFAULT 3"),
         ("notes", "TEXT DEFAULT ''"),
+        # P2-M.1
+        ("default_depth", "VARCHAR(20) DEFAULT 'standard'"),
+        ("is_active", "BOOLEAN DEFAULT 1"),
     ]
     with engine.begin() as conn:
         for col_name, col_type in migrations:
             if col_name not in existing:
                 conn.execute(text(f"ALTER TABLE channels ADD COLUMN {col_name} {col_type}"))
+
+
+def _migrate_channel_videos_table(engine) -> None:
+    """为 channel_videos 表补齐 P2-M.1 新增列。"""
+    insp = inspect(engine)
+    if "channel_videos" not in insp.get_table_names():
+        return
+    existing = {col["name"] for col in insp.get_columns("channel_videos")}
+    migrations = [
+        ("last_checked_at", "DATETIME"),
+        ("failure_reason", "TEXT DEFAULT ''"),
+    ]
+    with engine.begin() as conn:
+        for col_name, col_type in migrations:
+            if col_name not in existing:
+                conn.execute(text(f"ALTER TABLE channel_videos ADD COLUMN {col_name} {col_type}"))
 
 
 def _migrate_investment_views_table(engine) -> None:
@@ -73,6 +92,7 @@ def init_db(db_path: str | None = None) -> None:
     Base.metadata.create_all(_engine)
     _migrate_episodes_table(_engine)
     _migrate_channels_table(_engine)
+    _migrate_channel_videos_table(_engine)
     _migrate_investment_views_table(_engine)
 
 

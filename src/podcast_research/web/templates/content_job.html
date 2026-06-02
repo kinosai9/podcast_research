@@ -32,8 +32,13 @@
     <div id="job-result" style="display:none">
         <div id="job-success" style="display:none">
             <p style="font-size:1rem;font-weight:600;color:var(--success)">整理完成</p>
-            <a id="job-report-link" href="#" class="btn-action">查看报告</a>
-            <a href="/content/new" class="btn-action btn-secondary">继续添加新内容</a>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+                <a id="job-report-link" href="#" class="btn-action">查看报告</a>
+                <form id="job-sync-form" method="post" action="" style="display:inline">
+                    <button type="submit" class="btn-action">同步到知识库</button>
+                </form>
+                <a href="/content/new" class="btn-action btn-secondary">继续添加新内容</a>
+            </div>
         </div>
         <div id="job-failed" style="display:none">
             <div class="alert alert-error" id="job-error-msg"></div>
@@ -84,6 +89,7 @@
         if (status === "success") {
             document.getElementById("job-success").style.display = "block";
             document.getElementById("job-report-link").href = "/reports/" + reportId;
+            document.getElementById("job-sync-form").action = "/reports/" + reportId + "/sync";
             msgEl.textContent = "整理完成";
         } else {
             document.getElementById("job-failed").style.display = "block";

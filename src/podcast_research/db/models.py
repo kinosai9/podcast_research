@@ -101,7 +101,7 @@ class EntityRecord(Base):
 
 
 class Channel(Base):
-    """P1-F: 关注的 YouTube 频道（tags/priority/default_focus/limits）"""
+    """P1-F / P2-M.1: 关注的 YouTube 频道（tags/priority/default_focus/limits/is_active/default_depth）"""
 
     __tablename__ = "channels"
 
@@ -110,17 +110,19 @@ class Channel(Base):
     name: Mapped[str] = mapped_column(String(500), default="")
     url: Mapped[str] = mapped_column(String(500), default="")
     tags: Mapped[str] = mapped_column(Text, default="[]")
-    priority: Mapped[str] = mapped_column(String(20), default="secondary")
+    priority: Mapped[str] = mapped_column(String(20), default="secondary")  # core / watch / archive
     default_focus: Mapped[str] = mapped_column(Text, default="")
+    default_depth: Mapped[str] = mapped_column(String(20), default="standard")  # P2-M.1
     default_limit: Mapped[int] = mapped_column(Integer, default=10)
     default_max_analyze: Mapped[int] = mapped_column(Integer, default=3)
     notes: Mapped[str] = mapped_column(Text, default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # P2-M.1
     added_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class ChannelVideo(Base):
-    """P1-E: 频道视频列表（元数据，非字幕）"""
+    """P1-E / P2-M.1: 频道视频列表（元数据，非字幕）"""
 
     __tablename__ = "channel_videos"
 
@@ -131,6 +133,8 @@ class ChannelVideo(Base):
     url: Mapped[str] = mapped_column(String(500), default="")
     published_at: Mapped[str] = mapped_column(String(30), default="")
     duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
-    status: Mapped[str] = mapped_column(String(20), default="new")
+    status: Mapped[str] = mapped_column(String(20), default="new")  # new / analyzed / synced / skipped / failed
     report_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # P2-M.1
+    failure_reason: Mapped[str] = mapped_column(Text, default="")  # P2-M.1
     added_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)

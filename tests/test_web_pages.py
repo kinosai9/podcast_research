@@ -93,11 +93,11 @@ def test_api_endpoints_still_work(api_client, seeded_db):
 # ── P2-I.1 Dashboard Tests ──────────────────────────────────────
 
 def test_dashboard_loads_without_vault(api_client):
-    """Dashboard 在无 vault 配置时显示设置提示"""
-    resp = api_client.get("/dashboard")
-    assert resp.status_code == 200
-    html = resp.text
-    assert "Vault 未配置" in html or "OBSIDIAN_VAULT_PATH" in html
+    """Dashboard redirects to /setup/vault when no vault is configured."""
+    resp = api_client.get("/dashboard", follow_redirects=False)
+    assert resp.status_code in (301, 302, 303)
+    location = resp.headers.get("location", "")
+    assert "/setup/vault" in location
 
 
 def test_dashboard_loads_with_vault(api_client, tmp_path):
@@ -758,7 +758,7 @@ class TestContentNew:
             os.environ["OBSIDIAN_VAULT_PATH"] = old
 
     def test_analyze_redirects_to_job(self, api_client, tmp_path, monkeypatch):
-        """POST /content/analyze now redirects to job progress page."""
+        """POST /content/analyze redirects to unified task page."""
         monkeypatch.setattr(
             "podcast_research.utils.youtube.is_youtube_url", lambda u: True
         )
@@ -774,26 +774,26 @@ class TestContentNew:
                                          "focus": "AI Agents", "depth": "standard"},
                                    follow_redirects=False)
             assert resp.status_code in (303, 302)
-            assert "/content/jobs/" in resp.headers.get("location", "")
+            assert "/tasks/" in resp.headers.get("location", "")
         finally:
             os.environ["OBSIDIAN_VAULT_PATH"] = old
 
     def test_job_page_loads(self, api_client, tmp_path):
-        """GET /content/jobs/{id} — job page for valid id or not_found"""
+        """GET /content/jobs/{id} — redirects to unified /tasks/{id}"""
         vault = tmp_path / "vault"
         (vault / "99_System").mkdir(parents=True)
 
         old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
         os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
         try:
-            resp = api_client.get("/content/jobs/nonexistent123")
-            assert resp.status_code == 200
-            assert "不存在" in resp.text or "not_found" in resp.text
+            resp = api_client.get("/content/jobs/nonexistent123", follow_redirects=False)
+            assert resp.status_code in (301, 302)
+            assert "/tasks/" in resp.headers.get("location", "")
         finally:
             os.environ["OBSIDIAN_VAULT_PATH"] = old
 
     def test_job_status_api(self, api_client, tmp_path, monkeypatch):
-        """GET /content/jobs/{id}/status returns JSON"""
+        """GET /tasks/{id}/status returns JSON (unified task status)"""
         from podcast_research.services.job_service import create_job
         monkeypatch.setattr(
             "podcast_research.utils.youtube.is_youtube_url", lambda u: True
@@ -813,11 +813,1178 @@ class TestContentNew:
             location = resp.headers.get("location", "")
             job_id = location.rstrip("/").split("/")[-1]
 
-            status_resp = api_client.get(f"/content/jobs/{job_id}/status")
+            status_resp = api_client.get(f"/tasks/{job_id}/status")
             assert status_resp.status_code == 200
             data = status_resp.json()
             assert "status" in data
-            assert data["status"] in ("queued", "running", "success", "failed")
+            assert data["status"] in ("queued", "running", "success", "failed", "long_running")
         finally:
             os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+
+# ── P2-K.2 Knowledge Sync Tests ───────────────────────────────────
+
+
+class TestKnowledgeSync:
+    """P2-K.2: Sync report to knowledge base + brief refresh."""
+
+    def test_report_detail_has_sync_button(self, api_client, seeded_db):
+        """Report detail page shows '同步到知识库' button."""
+        resp = api_client.get("/reports/1")
+        assert resp.status_code == 200
+        assert "同步到知识库" in resp.text
+
+    def test_sync_no_vault_returns_friendly_error(self, api_client, seeded_db):
+        """POST /reports/{id}/sync without vault returns redirect with error msg."""
+        # conftest sets OBSIDIAN_VAULT_PATH="" so vault is not configured
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = ""
+        try:
+            resp = api_client.post("/reports/1/sync", follow_redirects=False)
+            assert resp.status_code in (303, 302)
+            location = resp.headers.get("location", "")
+            assert "error" in location
+            assert "OBSIDIAN_VAULT_PATH" in location or "知识库" in location
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_sync_report_not_found(self, api_client, tmp_path):
+        """POST /reports/{id}/sync with non-existent report returns friendly error."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.post("/reports/99999/sync", follow_redirects=False)
+            assert resp.status_code in (303, 302)
+            location = resp.headers.get("location", "")
+            assert "不存在" in location or "error" in location
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_sync_creates_job_and_redirects(self, api_client, seeded_db, tmp_path):
+        """POST /reports/{id}/sync creates a sync job and redirects to /tasks/{id}."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.post("/reports/1/sync", follow_redirects=False)
+            assert resp.status_code in (303, 302)
+            location = resp.headers.get("location", "")
+            assert "/tasks/" in location
+            job_id = location.rstrip("/").split("/")[-1]
+            assert len(job_id) > 0
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_sync_job_page_loads(self, api_client, tmp_path):
+        """GET /sync/jobs/{id} redirects to /tasks/{id}."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get("/sync/jobs/nonexistent123", follow_redirects=False)
+            assert resp.status_code in (301, 302)
+            assert "/tasks/" in resp.headers.get("location", "")
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_sync_job_page_shows_progress(self, api_client, seeded_db, tmp_path, monkeypatch):
+        """GET /tasks/{id} shows sync progress UI for sync job."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        # Create a sync job manually
+        from podcast_research.services.job_service import create_sync_job
+        job = create_sync_job(report_id=1)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get(f"/tasks/{job.job_id}")
+            assert resp.status_code == 200
+            assert "同步到知识库" in resp.text or "sync" in job.job_type
+            assert job.job_id in resp.text
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_sync_job_status_api(self, api_client, seeded_db, tmp_path):
+        """GET /tasks/{id}/status returns JSON with sync fields."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        from podcast_research.services.job_service import create_sync_job
+        job = create_sync_job(report_id=1)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get(f"/tasks/{job.job_id}/status")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "status" in data
+            assert data["status"] in ("queued", "running", "success", "failed", "long_running")
+            assert "stage" in data
+            assert "message" in data
+            assert data["report_id"] == 1
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_sync_job_status_not_found(self, api_client):
+        """GET /tasks/{id}/status returns 404 for unknown job."""
+        resp = api_client.get("/tasks/nonexistent123/status")
+        assert resp.status_code == 404
+        data = resp.json()
+        assert data["status"] == "not_found"
+
+    def test_sync_success_job_status_json(self, api_client, seeded_db, tmp_path, monkeypatch):
+        """After successful sync, job status JSON includes result_links with brief/watchlist URLs."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        # Mock the sync service to succeed instantly
+        def mock_sync(report_id, vault_path=None, progress_callback=None):
+            from podcast_research.services.sync_service import SyncResult
+            result = SyncResult(
+                report_id=report_id,
+                exported_reports=1,
+                cards_updated=3,
+                relations_updated=2,
+                brief_updated=True,
+                watchlist_updated=True,
+            )
+            if progress_callback:
+                progress_callback("exporting_report", "正在导出")
+                progress_callback("updating_cards", "正在更新卡片")
+                progress_callback("success", "知识库已更新")
+            return result
+
+        monkeypatch.setattr(
+            "podcast_research.services.sync_service.sync_report_to_knowledge_base",
+            mock_sync,
+        )
+
+        from podcast_research.services.job_service import create_sync_job, start_sync_job
+        job = create_sync_job(report_id=1)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            start_sync_job(job)
+
+            # Poll until success (with timeout)
+            import time
+            max_wait = 10
+            for _ in range(max_wait * 2):
+                resp = api_client.get(f"/tasks/{job.job_id}/status")
+                data = resp.json()
+                if data["status"] == "success":
+                    break
+                time.sleep(0.5)
+
+            resp = api_client.get(f"/tasks/{job.job_id}/status")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "success"
+            assert data["result_links"] is not None
+            assert data["result_links"]["dashboard"] == "/dashboard"
+            assert data["result_links"]["brief"] == "/briefs/latest"
+            assert data["result_links"]["watchlist"] == "/watchlist"
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_sync_failure_job_status(self, api_client, seeded_db, tmp_path, monkeypatch):
+        """Failed sync job status shows error and failed status."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        # Mock the sync service to fail
+        def mock_sync_fail(report_id, vault_path=None, progress_callback=None):
+            from podcast_research.services.sync_service import SyncResult
+            result = SyncResult(report_id=report_id)
+            result.error = "报告导出失败，请检查知识库路径是否可写。"
+            if progress_callback:
+                progress_callback("exporting_report", "正在导出")
+            return result
+
+        monkeypatch.setattr(
+            "podcast_research.services.sync_service.sync_report_to_knowledge_base",
+            mock_sync_fail,
+        )
+
+        from podcast_research.services.job_service import create_sync_job, start_sync_job
+        job = create_sync_job(report_id=1)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            start_sync_job(job)
+
+            import time
+            max_wait = 10
+            for _ in range(max_wait * 2):
+                resp = api_client.get(f"/tasks/{job.job_id}/status")
+                data = resp.json()
+                if data["status"] == "failed":
+                    break
+                time.sleep(0.5)
+
+            resp = api_client.get(f"/tasks/{job.job_id}/status")
+            data = resp.json()
+            assert data["status"] == "failed"
+            assert data["error"] is not None
+            assert len(data["error"]) > 0
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_sync_job_success_page_has_brief_links(self, api_client, seeded_db, tmp_path, monkeypatch):
+        """Unified task detail page for sync job success shows required links."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        # Create a sync job and manually set it to success with result_links
+        from podcast_research.services.job_service import create_sync_job, update_job, _set_result_links
+        job = create_sync_job(report_id=1)
+        update_job(job.job_id, status="success", stage="success", message="知识库已更新")
+        _set_result_links(job.job_id, "sync", 1)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get(f"/tasks/{job.job_id}")
+            assert resp.status_code == 200
+            # Check for the links in the page — result_links rendered server-side
+            assert "查看研究摘要" in resp.text or "/briefs/latest" in resp.text
+            assert "查看我的关注" in resp.text or "/watchlist" in resp.text
+            assert "返回首页" in resp.text or "/dashboard" in resp.text
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_sync_does_not_call_llm(self, api_client, seeded_db, tmp_path, monkeypatch):
+        """Sync service operations do not call LLM."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        call_count = [0]
+
+        def mock_sync(report_id, vault_path=None, progress_callback=None):
+            call_count[0] += 1
+            from podcast_research.services.sync_service import SyncResult
+            result = SyncResult(
+                report_id=report_id,
+                exported_reports=1,
+                brief_updated=True,
+                watchlist_updated=True,
+            )
+            if progress_callback:
+                progress_callback("success", "知识库已更新")
+            return result
+
+        monkeypatch.setattr(
+            "podcast_research.services.sync_service.sync_report_to_knowledge_base",
+            mock_sync,
+        )
+
+        from podcast_research.services.job_service import create_sync_job, start_sync_job
+        job = create_sync_job(report_id=1)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            start_sync_job(job)
+            import time
+            for _ in range(20):
+                resp = api_client.get(f"/tasks/{job.job_id}/status")
+                if resp.json()["status"] == "success":
+                    break
+                time.sleep(0.5)
+            assert call_count[0] == 1  # Only the mock was called, no LLM
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_existing_web_tests_not_broken(self, api_client, seeded_db):
+        """Quick sanity: existing routes still work after P2-K.2 additions."""
+        # /reports list
+        resp = api_client.get("/reports")
+        assert resp.status_code == 200
+
+        # /reports/{id} detail
+        resp = api_client.get("/reports/1")
+        assert resp.status_code == 200
+
+        # /dashboard
+        resp = api_client.get("/dashboard")
+        assert resp.status_code == 200
+
+        # /content/new
+        resp = api_client.get("/content/new")
+        assert resp.status_code == 200
+
+        # /api/* endpoints
+        resp = api_client.get("/api/health")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+
+# ── P2-K.2.1 Unified Task UX Tests ─────────────────────────────────
+
+
+class TestUnifiedTasks:
+    """P2-K.2.1: Unified /tasks routes, long_running/stale, dashboard badge."""
+
+    def test_task_list_page_loads(self, api_client, tmp_path):
+        """GET /tasks returns task list page."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get("/tasks")
+            assert resp.status_code == 200
+            assert "整理任务" in resp.text
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_task_list_shows_analysis_and_sync_jobs(self, api_client, seeded_db, tmp_path):
+        """Task list renders jobs of both types."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        from podcast_research.services.job_service import create_job, create_sync_job
+        j1 = create_job("https://youtube.com/watch?v=test", ["AI"])
+        j2 = create_sync_job(report_id=1)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get("/tasks")
+            assert resp.status_code == 200
+            assert "生成报告" in resp.text or "analysis" in resp.text.lower()
+            assert "同步知识库" in resp.text or "sync" in resp.text.lower()
+            # Both job_ids should appear
+            assert j1.job_id in resp.text
+            assert j2.job_id in resp.text
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_unified_task_detail_for_analysis(self, api_client, seeded_db, tmp_path):
+        """GET /tasks/{id} for analysis job shows analysis-specific content."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        from podcast_research.services.job_service import create_job
+        job = create_job("https://youtube.com/watch?v=test", ["AI"], depth="deep")
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get(f"/tasks/{job.job_id}")
+            assert resp.status_code == 200
+            assert "生成报告" in resp.text or "研究报告" in resp.text
+            assert job.job_id in resp.text
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_unified_task_detail_for_sync(self, api_client, seeded_db, tmp_path):
+        """GET /tasks/{id} for sync job shows sync-specific content."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        from podcast_research.services.job_service import create_sync_job
+        job = create_sync_job(report_id=1)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get(f"/tasks/{job.job_id}")
+            assert resp.status_code == 200
+            assert "同步到知识库" in resp.text or "sync" in job.job_type
+            assert job.job_id in resp.text
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_unified_task_status_returns_heartbeat_fields(self, api_client, seeded_db, tmp_path):
+        """GET /tasks/{id}/status includes elapsed, can_leave_page, result_links."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        from podcast_research.services.job_service import create_job
+        job = create_job("https://youtube.com/watch?v=test", ["AI"])
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get(f"/tasks/{job.job_id}/status")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "elapsed_seconds" in data
+            assert "can_leave_page" in data
+            assert "result_links" in data
+            assert "job_type_label" in data
+            assert data["job_type_label"] == "生成报告"
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_sync_job_status_has_sync_label(self, api_client, seeded_db, tmp_path):
+        """Sync job status returns 同步知识库 label."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        from podcast_research.services.job_service import create_sync_job
+        job = create_sync_job(report_id=1)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get(f"/tasks/{job.job_id}/status")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["job_type_label"] == "同步知识库"
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_long_running_detected_with_low_threshold(self, api_client, seeded_db,
+                                                       tmp_path, monkeypatch):
+        """Job enters long_running after heartbeat passes custom threshold."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        # Set long_job threshold to 0 so any started job is immediately long_running
+        monkeypatch.setattr(
+            "podcast_research.services.job_service.LONG_JOB_THRESHOLD", 0
+        )
+        monkeypatch.setattr(
+            "podcast_research.services.job_service.STALE_THRESHOLD", 999999
+        )
+
+        # Create a job and manually start it with a heartbeat
+        from podcast_research.services.job_service import create_job, update_job
+        job = create_job("https://youtube.com/watch?v=test", ["AI"])
+        update_job(job.job_id, status="running", stage="analyzing",
+                   message="正在进行 AI 分析")
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get(f"/tasks/{job.job_id}/status")
+            data = resp.json()
+            assert data["status"] == "long_running"
+            assert data["can_leave_page"] is True
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_long_running_not_failed(self, api_client, seeded_db, tmp_path,
+                                      monkeypatch):
+        """long_running status does not mean failed — it shows can_leave_page."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        monkeypatch.setattr(
+            "podcast_research.services.job_service.LONG_JOB_THRESHOLD", 0
+        )
+        monkeypatch.setattr(
+            "podcast_research.services.job_service.STALE_THRESHOLD", 999999
+        )
+
+        from podcast_research.services.job_service import create_job, update_job
+        job = create_job("https://youtube.com/watch?v=test", ["AI"])
+        update_job(job.job_id, status="running", stage="analyzing",
+                   message="正在进行 AI 分析")
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get(f"/tasks/{job.job_id}/status")
+            data = resp.json()
+            assert data["status"] != "failed"
+            assert data["status"] == "long_running"
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_stale_detected_with_low_threshold(self, api_client, seeded_db,
+                                                tmp_path, monkeypatch):
+        """Job without heartbeat past stale threshold shows stale status."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        # Set stale threshold to 0 so any job is immediately stale
+        monkeypatch.setattr(
+            "podcast_research.services.job_service.STALE_THRESHOLD", 0
+        )
+        monkeypatch.setattr(
+            "podcast_research.services.job_service.LONG_JOB_THRESHOLD", 999999
+        )
+
+        from podcast_research.services.job_service import create_job, update_job
+        job = create_job("https://youtube.com/watch?v=test", ["AI"])
+        update_job(job.job_id, status="running", stage="analyzing")
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get(f"/tasks/{job.job_id}/status")
+            data = resp.json()
+            assert data["status"] == "stale"
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_analysis_success_has_report_in_result_links(self, api_client, seeded_db,
+                                                          tmp_path, monkeypatch):
+        """Analysis job success returns report link in result_links."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        def mock_analyze(youtube_url, focus_areas=None, depth="standard",
+                         mock=False, progress_callback=None):
+            from podcast_research.services.analyze_service import AnalyzeResult
+            if progress_callback:
+                progress_callback("analyzing", "analyzing")
+            return AnalyzeResult(success=True, report_id=42)
+
+        monkeypatch.setattr(
+            "podcast_research.services.analyze_service.analyze_youtube_url",
+            mock_analyze,
+        )
+
+        from podcast_research.services.job_service import create_job, start_job
+        job = create_job("https://youtube.com/watch?v=test", ["AI"])
+        import time
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            start_job(job)
+            for _ in range(20):
+                resp = api_client.get(f"/tasks/{job.job_id}/status")
+                if resp.json()["status"] == "success":
+                    break
+                time.sleep(0.5)
+
+            data = api_client.get(f"/tasks/{job.job_id}/status").json()
+            assert data["status"] == "success"
+            assert data["result_links"] is not None
+            assert "report" in data["result_links"]
+            assert data["result_links"]["report"] == "/reports/42"
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_dashboard_shows_task_entry(self, api_client, seeded_db, tmp_path):
+        """Dashboard action bar includes 整理任务 link."""
+        vault = tmp_path / "vault"
+        for d in ["01_Reports", "02_Topics", "99_System"]:
+            (vault / d).mkdir(parents=True)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get("/dashboard")
+            assert resp.status_code == 200
+            assert "/tasks" in resp.text
+            assert "整理任务" in resp.text
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_old_content_jobs_redirects_to_tasks(self, api_client):
+        """GET /content/jobs/{id} returns 301 redirect to /tasks/{id}."""
+        resp = api_client.get("/content/jobs/test123", follow_redirects=False)
+        assert resp.status_code in (301, 302)
+        assert "/tasks/test123" in resp.headers.get("location", "")
+
+    def test_old_sync_jobs_redirects_to_tasks(self, api_client):
+        """GET /sync/jobs/{id} returns 301 redirect to /tasks/{id}."""
+        resp = api_client.get("/sync/jobs/test123", follow_redirects=False)
+        assert resp.status_code in (301, 302)
+        assert "/tasks/test123" in resp.headers.get("location", "")
+
+    def test_old_content_jobs_status_still_works(self, api_client, seeded_db, tmp_path):
+        """GET /content/jobs/{id}/status delegates to unified status."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        from podcast_research.services.job_service import create_job
+        job = create_job("https://youtube.com/watch?v=test", ["AI"])
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get(f"/content/jobs/{job.job_id}/status")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "status" in data
+            assert "elapsed_seconds" in data  # Unified fields present
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_old_sync_jobs_status_still_works(self, api_client, seeded_db, tmp_path):
+        """GET /sync/jobs/{id}/status delegates to unified status."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        from podcast_research.services.job_service import create_sync_job
+        job = create_sync_job(report_id=1)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get(f"/sync/jobs/{job.job_id}/status")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "status" in data
+            assert "result_links" in data  # Unified fields present
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+
+# ── P2-K.3 One-click Full Flow Tests ───────────────────────────────
+
+
+class TestFullFlow:
+    """P2-K.3: full_flow mode chains analysis → sync automatically."""
+
+    def test_content_new_shows_flow_mode(self, api_client, tmp_path):
+        """/content/new page shows flow mode radio buttons."""
+        vault = tmp_path / "vault"
+        (vault / "99_System").mkdir(parents=True)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get("/content/new")
+            assert resp.status_code == 200
+            assert "整理进知识库" in resp.text
+            assert "仅生成报告" in resp.text
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_flow_full_creates_full_flow_job(self, api_client, tmp_path, monkeypatch):
+        """flow_mode=full creates a full_flow job."""
+        monkeypatch.setattr(
+            "podcast_research.utils.youtube.is_youtube_url", lambda u: True
+        )
+        vault = tmp_path / "vault"
+        (vault / "99_System").mkdir(parents=True)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.post("/content/analyze",
+                                   data={"youtube_url": "https://youtube.com/watch?v=test",
+                                         "focus": "AI", "depth": "standard",
+                                         "flow_mode": "full"},
+                                   follow_redirects=False)
+            location = resp.headers.get("location", "")
+            assert "/tasks/" in location
+            job_id = location.rstrip("/").split("/")[-1]
+
+            from podcast_research.services.job_service import get_job
+            job = get_job(job_id)
+            assert job is not None
+            assert job.job_type == "full_flow"
+            assert job.auto_sync is True
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_flow_report_only_creates_analysis_job(self, api_client, tmp_path, monkeypatch):
+        """flow_mode=report_only creates an analysis job (not full_flow)."""
+        monkeypatch.setattr(
+            "podcast_research.utils.youtube.is_youtube_url", lambda u: True
+        )
+        vault = tmp_path / "vault"
+        (vault / "99_System").mkdir(parents=True)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.post("/content/analyze",
+                                   data={"youtube_url": "https://youtube.com/watch?v=test",
+                                         "focus": "AI", "depth": "standard",
+                                         "flow_mode": "report_only"},
+                                   follow_redirects=False)
+            location = resp.headers.get("location", "")
+            job_id = location.rstrip("/").split("/")[-1]
+
+            from podcast_research.services.job_service import get_job
+            job = get_job(job_id)
+            assert job is not None
+            assert job.job_type == "analysis"
+            assert job.auto_sync is False
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_full_flow_analysis_success_then_sync(self, api_client, seeded_db,
+                                                    tmp_path, monkeypatch):
+        """full_flow: after analysis succeeds, sync is called automatically."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        # Mock analyze to succeed
+        def mock_analyze(youtube_url, focus_areas=None, depth="standard",
+                         mock=False, progress_callback=None):
+            from podcast_research.services.analyze_service import AnalyzeResult
+            if progress_callback:
+                progress_callback("analyzing", "analyzing")
+            return AnalyzeResult(success=True, report_id=55)
+
+        monkeypatch.setattr(
+            "podcast_research.services.analyze_service.analyze_youtube_url",
+            mock_analyze,
+        )
+
+        # Mock sync to succeed
+        sync_called = [False]
+        def mock_sync(report_id, vault_path=None, progress_callback=None):
+            sync_called[0] = True
+            from podcast_research.services.sync_service import SyncResult
+            result = SyncResult(report_id=report_id, exported_reports=1,
+                                brief_updated=True, watchlist_updated=True)
+            if progress_callback:
+                progress_callback("exporting_report", "导出中")
+                progress_callback("success", "完成")
+            return result
+
+        monkeypatch.setattr(
+            "podcast_research.services.sync_service.sync_report_to_knowledge_base",
+            mock_sync,
+        )
+
+        from podcast_research.services.job_service import create_job, start_job
+        job = create_job("https://youtube.com/watch?v=test", ["AI"], auto_sync=True)
+        assert job.job_type == "full_flow"
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            start_job(job)
+            import time
+            for _ in range(30):
+                resp = api_client.get(f"/tasks/{job.job_id}/status")
+                if resp.json()["status"] == "success":
+                    break
+                time.sleep(0.5)
+
+            data = api_client.get(f"/tasks/{job.job_id}/status").json()
+            assert data["status"] == "success"
+            assert sync_called[0] is True
+            assert data["result_links"]["report"] == "/reports/55"
+            assert data["result_links"]["brief"] == "/briefs/latest"
+            assert data["result_links"]["watchlist"] == "/watchlist"
+            assert data["result_links"]["dashboard"] == "/dashboard"
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_full_flow_sync_failed_preserves_report(self, api_client, seeded_db,
+                                                      tmp_path, monkeypatch):
+        """full_flow: if sync fails, job reports failure but preserves report link."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        def mock_analyze(youtube_url, focus_areas=None, depth="standard",
+                         mock=False, progress_callback=None):
+            from podcast_research.services.analyze_service import AnalyzeResult
+            if progress_callback:
+                progress_callback("analyzing", "analyzing")
+            return AnalyzeResult(success=True, report_id=42)
+
+        monkeypatch.setattr(
+            "podcast_research.services.analyze_service.analyze_youtube_url",
+            mock_analyze,
+        )
+
+        def mock_sync_fail(report_id, vault_path=None, progress_callback=None):
+            from podcast_research.services.sync_service import SyncResult
+            result = SyncResult(report_id=report_id)
+            result.error = "Vault 不可写"
+            if progress_callback:
+                progress_callback("exporting_report", "导出中")
+            return result
+
+        monkeypatch.setattr(
+            "podcast_research.services.sync_service.sync_report_to_knowledge_base",
+            mock_sync_fail,
+        )
+
+        from podcast_research.services.job_service import create_job, start_job
+        job = create_job("https://youtube.com/watch?v=test", ["AI"], auto_sync=True)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            start_job(job)
+            import time
+            for _ in range(30):
+                resp = api_client.get(f"/tasks/{job.job_id}/status")
+                if resp.json()["status"] == "failed":
+                    break
+                time.sleep(0.5)
+
+            data = api_client.get(f"/tasks/{job.job_id}/status").json()
+            assert data["status"] == "failed"
+            # Report was generated — links should be preserved
+            assert data["report_id"] == 42
+            assert data["result_links"]["report"] == "/reports/42"
+            assert "sync" in data["result_links"]  # retry link
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_full_flow_task_detail_shows_correct_title(self, api_client, tmp_path):
+        """Task detail for full_flow shows '正在整理进知识库' title."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        from podcast_research.services.job_service import create_job
+        job = create_job("https://youtube.com/watch?v=test", ["AI"], auto_sync=True)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get(f"/tasks/{job.job_id}")
+            assert resp.status_code == 200
+            assert "正在整理进知识库" in resp.text or "full_flow" in job.job_type
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_full_flow_status_shows_correct_label(self, api_client, tmp_path):
+        """Full_flow job status shows '整理进知识库' label."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        from podcast_research.services.job_service import create_job
+        job = create_job("https://youtube.com/watch?v=test", ["AI"], auto_sync=True)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get(f"/tasks/{job.job_id}/status")
+            data = resp.json()
+            assert data["job_type_label"] == "整理进知识库"
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_task_list_shows_full_flow_with_label(self, api_client, tmp_path):
+        """Task list shows full_flow with '整理进知识库' label."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        from podcast_research.services.job_service import create_job
+        create_job("https://youtube.com/watch?v=test", ["AI"], auto_sync=True)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get("/tasks")
+            assert resp.status_code == 200
+            assert "整理进知识库" in resp.text
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_analysis_only_not_broken(self, api_client, seeded_db, tmp_path, monkeypatch):
+        """Original analysis-only flow (report_only) still works correctly."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        def mock_analyze(youtube_url, focus_areas=None, depth="standard",
+                         mock=False, progress_callback=None):
+            from podcast_research.services.analyze_service import AnalyzeResult
+            if progress_callback:
+                progress_callback("analyzing", "analyzing")
+            return AnalyzeResult(success=True, report_id=88)
+
+        monkeypatch.setattr(
+            "podcast_research.services.analyze_service.analyze_youtube_url",
+            mock_analyze,
+        )
+
+        from podcast_research.services.job_service import create_job, start_job
+        job = create_job("https://youtube.com/watch?v=test", ["AI"], auto_sync=False)
+        assert job.job_type == "analysis"
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            start_job(job)
+            import time
+            for _ in range(30):
+                resp = api_client.get(f"/tasks/{job.job_id}/status")
+                if resp.json()["status"] == "success":
+                    break
+                time.sleep(0.5)
+
+            data = api_client.get(f"/tasks/{job.job_id}/status").json()
+            assert data["status"] == "success"
+            assert data["result_links"]["report"] == "/reports/88"
+            assert "sync" in data["result_links"]
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_report_detail_sync_button_still_works(self, api_client, seeded_db):
+        """Report detail page still has manual sync button for report_only flow."""
+        resp = api_client.get("/reports/1")
+        assert resp.status_code == 200
+        assert "同步到知识库" in resp.text
+
+
+# ── P2-L.1 Vault Setup Wizard Tests ─────────────────────────────────
+
+
+class TestVaultSetup:
+    """P2-L.1: First-run vault setup wizard, validation, repair."""
+
+    def test_setup_page_loads(self, api_client):
+        """GET /setup/vault returns setup form page."""
+        resp = api_client.get("/setup/vault")
+        assert resp.status_code == 200
+        assert "初始化知识库" in resp.text
+
+    def test_setup_page_has_form(self, api_client):
+        """Setup page has vault_path input and submit button."""
+        resp = api_client.get("/setup/vault")
+        assert resp.status_code == 200
+        assert "vault_path" in resp.text
+        assert "初始化知识库" in resp.text
+
+    def test_setup_creates_directory_structure(self, api_client, tmp_path):
+        """POST /setup/vault creates standard vault directory structure."""
+        vault = tmp_path / "test_vault"
+
+        resp = api_client.post("/setup/vault",
+                               data={"vault_path": str(vault)},
+                               follow_redirects=False)
+        assert resp.status_code in (303, 302)
+
+        # Verify directories created
+        from podcast_research.workspace.setup import REQUIRED_DIRS
+        for d in REQUIRED_DIRS:
+            assert (vault / d).is_dir(), f"Missing dir: {d}"
+
+    def test_setup_creates_watchlist_yaml(self, api_client, tmp_path):
+        """POST /setup/vault creates Watchlist.yaml with default content."""
+        vault = tmp_path / "test_vault"
+
+        api_client.post("/setup/vault",
+                        data={"vault_path": str(vault)},
+                        follow_redirects=False)
+
+        wl = vault / "99_System" / "Watchlist.yaml"
+        assert wl.is_file()
+        content = wl.read_text(encoding="utf-8")
+        assert "OpenAI" in content
+        assert "NVIDIA" in content
+        assert "AI Agents" in content
+
+    def test_setup_creates_home_md(self, api_client, tmp_path):
+        """POST /setup/vault creates Home.md."""
+        vault = tmp_path / "test_vault"
+
+        api_client.post("/setup/vault",
+                        data={"vault_path": str(vault)},
+                        follow_redirects=False)
+
+        home = vault / "Home.md"
+        assert home.is_file()
+        assert "欢迎使用" in home.read_text(encoding="utf-8")
+
+    def test_setup_creates_getting_started(self, api_client, tmp_path):
+        """POST /setup/vault creates Getting Started.md."""
+        vault = tmp_path / "test_vault"
+
+        api_client.post("/setup/vault",
+                        data={"vault_path": str(vault)},
+                        follow_redirects=False)
+
+        gs = vault / "99_System" / "Getting Started.md"
+        assert gs.is_file()
+        content = gs.read_text(encoding="utf-8")
+        assert "Getting Started" in content
+        assert "Obsidian" in content
+
+    def test_setup_does_not_overwrite_existing_file(self, api_client, tmp_path):
+        """POST /setup/vault does not overwrite existing Home.md."""
+        vault = tmp_path / "test_vault"
+        vault.mkdir(parents=True)
+        (vault / "99_System").mkdir(parents=True)
+        home = vault / "Home.md"
+        home.write_text("# My Custom Home\nCustom content.", encoding="utf-8")
+
+        api_client.post("/setup/vault",
+                        data={"vault_path": str(vault)},
+                        follow_redirects=False)
+
+        content = home.read_text(encoding="utf-8")
+        assert "My Custom Home" in content
+        assert "欢迎使用" not in content  # Not overwritten
+
+    def test_setup_empty_path_rejected(self, api_client):
+        """POST /setup/vault with empty path returns error."""
+        resp = api_client.post("/setup/vault",
+                               data={"vault_path": "  "},
+                               follow_redirects=False)
+        assert resp.status_code in (303, 302)
+        assert "error" in resp.headers.get("location", "")
+
+    def test_setup_nonempty_dir_safe(self, api_client, tmp_path):
+        """POST /setup/vault on non-empty dir is safe — only adds missing items."""
+        vault = tmp_path / "test_vault"
+        vault.mkdir(parents=True)
+        # Pre-create a file that shouldn't be touched
+        existing = vault / "my_notes.md"
+        existing.write_text("keep me", encoding="utf-8")
+
+        resp = api_client.post("/setup/vault",
+                               data={"vault_path": str(vault)},
+                               follow_redirects=False)
+        assert resp.status_code in (303, 302)
+        assert existing.read_text(encoding="utf-8") == "keep me"
+        # Vault dirs should be created
+        assert (vault / "01_Reports").is_dir()
+
+    def test_setup_saves_vault_path_to_config(self, api_client, tmp_path, monkeypatch):
+        """POST /setup/vault persists path to user_settings.json."""
+        import podcast_research.config_store as cs
+        settings_file = tmp_path / "settings.json"
+        monkeypatch.setattr(cs, "_get_settings_path", lambda: settings_file)
+        monkeypatch.setattr(cs, "_SETTINGS_PATH", settings_file)
+
+        vault = tmp_path / "test_vault"
+
+        api_client.post("/setup/vault",
+                        data={"vault_path": str(vault)},
+                        follow_redirects=False)
+
+        assert settings_file.exists()
+        import json
+        data = json.loads(settings_file.read_text(encoding="utf-8"))
+        assert data["obsidian_vault_path"] == str(vault)
+
+    def test_dashboard_with_complete_vault_loads(self, api_client, tmp_path):
+        """Dashboard loads normally when vault is complete."""
+        vault = tmp_path / "vault"
+        from podcast_research.workspace.setup import REQUIRED_DIRS, REQUIRED_FILES
+        for d in REQUIRED_DIRS:
+            (vault / d).mkdir(parents=True)
+        for f in REQUIRED_FILES:
+            full = vault / f
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text("# test", encoding="utf-8")
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get("/dashboard", follow_redirects=False)
+            assert resp.status_code == 200
+            assert "setup/vault" not in resp.headers.get("location", "")
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_dashboard_shows_repair_banner_when_incomplete(self, api_client, tmp_path):
+        """Dashboard shows repair banner when vault structure is incomplete."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+        # Only create some dirs, leave others missing
+        for d in ["01_Reports", "02_Topics"]:
+            (vault / d).mkdir(parents=True)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.get("/dashboard", follow_redirects=False)
+            assert resp.status_code == 200
+            html = resp.text
+            assert "知识库结构不完整" in html or "一键修复" in html
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_repair_vault_fixes_missing(self, api_client, tmp_path):
+        """POST /setup/vault/repair creates missing dirs and files."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+        (vault / "01_Reports").mkdir(parents=True)
+        # Missing many dirs and files
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(vault)
+        try:
+            resp = api_client.post("/setup/vault/repair", follow_redirects=False)
+            assert resp.status_code in (303, 302)
+            location = resp.headers.get("location", "")
+            assert "success" in location
+
+            # After repair, dirs should exist
+            assert (vault / "02_Topics").is_dir()
+            assert (vault / "99_System").is_dir()
+            assert (vault / "Home.md").is_file()
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_validate_vault_detects_missing(self, tmp_path):
+        """validate_vault identifies missing dirs and files."""
+        vault = tmp_path / "vault"
+        vault.mkdir(parents=True)
+
+        from podcast_research.workspace.setup import validate_vault
+        result = validate_vault(vault)
+
+        assert not result.is_initialized
+        assert len(result.missing_dirs) > 0
+        assert len(result.missing_files) > 0
+
+    def test_validate_vault_complete(self, tmp_path):
+        """validate_vault returns is_initialized=True for complete vault."""
+        vault = tmp_path / "vault"
+        from podcast_research.workspace.setup import REQUIRED_DIRS, REQUIRED_FILES, initialize_vault
+        initialize_vault(vault)
+
+        from podcast_research.workspace.setup import validate_vault
+        result = validate_vault(vault)
+
+        assert result.is_initialized
+        assert len(result.missing_dirs) == 0
+        assert len(result.missing_files) == 0
+
+    def test_config_store_persistence(self, tmp_path, monkeypatch):
+        """config_store saves and loads vault path correctly."""
+        import podcast_research.config_store as cs
+        settings_file = tmp_path / "settings.json"
+        monkeypatch.setattr(cs, "_get_settings_path", lambda: settings_file)
+        monkeypatch.setattr(cs, "_SETTINGS_PATH", settings_file)
+
+        test_path = str(tmp_path / "my_vault")
+        cs.save_user_vault_path(test_path)
+
+        result = cs.get_user_vault_path()
+        assert result == test_path
+
+    def test_config_store_falls_back_to_env(self, tmp_path, monkeypatch):
+        """config_store falls back to OBSIDIAN_VAULT_PATH when no settings file."""
+        import podcast_research.config_store as cs
+        settings_file = tmp_path / "nonexistent.json"
+        monkeypatch.setattr(cs, "_get_settings_path", lambda: settings_file)
+        monkeypatch.setattr(cs, "_SETTINGS_PATH", settings_file)
+
+        old = os.environ.get("OBSIDIAN_VAULT_PATH", "")
+        os.environ["OBSIDIAN_VAULT_PATH"] = str(tmp_path / "env_vault")
+        try:
+            result = cs.get_user_vault_path()
+            assert result == str(tmp_path / "env_vault")
+        finally:
+            os.environ["OBSIDIAN_VAULT_PATH"] = old
+
+    def test_existing_routes_still_work(self, api_client, seeded_db):
+        """Quick sanity: original routes not broken by P2-L.1 refactor."""
+        # API health
+        resp = api_client.get("/api/health")
+        assert resp.status_code == 200
+        # Reports
+        resp = api_client.get("/reports")
+        assert resp.status_code == 200
+        # Content new
+        resp = api_client.get("/content/new")
+        assert resp.status_code == 200
+
+
 

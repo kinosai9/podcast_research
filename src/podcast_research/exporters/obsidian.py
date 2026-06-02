@@ -274,8 +274,13 @@ def export_report(
     date_str = published[:10] if published else report.analysis_timestamp.strftime("%Y-%m-%d") if report.analysis_timestamp else datetime.now().strftime("%Y-%m-%d")
 
     vid = episode.video_id or "unknown"
-    ch_name = sanitize_filename(channel_name or source_info.get("channel_name", "") or "UnknownChannel")
-
+    # P2-L.2: Fallback priority — channel_name > source_info.channel_name > YouTube_{vid}
+    # Never default to "UnknownChannel" unless all fallback data is missing
+    raw_ch = channel_name or source_info.get("channel_name", "")
+    if raw_ch and raw_ch.lower() not in ("unknownchannel", "unknown", "none", ""):
+        ch_name = sanitize_filename(raw_ch)
+    else:
+        ch_name = sanitize_filename(f"YouTube_{vid}")
     filename = f"{date_str}_{ch_name}_{vid}.md"
     filepath = vault_path / "01_Reports" / filename
 

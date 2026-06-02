@@ -13,6 +13,12 @@
 <!-- Report Hero -->
 <div class="report-hero">
     <h2>报告 #{{ report.id }}</h2>
+    <div style="margin-bottom:12px">
+        <form method="post" action="/reports/{{ report.id }}/sync" style="display:inline">
+            <button type="submit" class="btn-action" title="将本报告导出到 Obsidian，并更新研究摘要与我的关注。">同步到知识库</button>
+        </form>
+        <span style="font-size:0.75rem;color:var(--muted);margin-left:8px">将本报告导出到 Obsidian，并更新研究摘要与我的关注。</span>
+    </div>
     <div class="meta-row">
         <span class="tag tag-source {{ report.source_type }}">{{ report.source_type }}</span>
         {% if report.video_id %}

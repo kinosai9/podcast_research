@@ -40,6 +40,28 @@
         </div>
 
         <div class="form-group">
+            <label class="form-label">整理方式</label>
+            <div class="radio-group" style="display:flex;flex-direction:column;gap:8px;margin-top:6px">
+                <label class="form-radio" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                    <input type="radio" name="flow_mode" value="full" checked
+                           style="margin-top:2px">
+                    <div>
+                        <strong>整理进知识库（推荐）</strong>
+                        <p class="form-help" style="margin:2px 0 0">生成报告后自动更新研究摘要和我的关注。</p>
+                    </div>
+                </label>
+                <label class="form-radio" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                    <input type="radio" name="flow_mode" value="report_only"
+                           style="margin-top:2px">
+                    <div>
+                        <strong>仅生成报告</strong>
+                        <p class="form-help" style="margin:2px 0 0">只生成一份报告，稍后可手动同步到知识库。</p>
+                    </div>
+                </label>
+            </div>
+        </div>
+
+        <div class="form-group">
             <label class="form-checkbox">
                 <input type="checkbox" name="mock_mode" value="true">
                 <span>测试模式（不调用 AI，快速验证链接和字幕可用性）</span>

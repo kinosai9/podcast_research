@@ -25,12 +25,42 @@
         <form method="post" action="/dashboard/actions/refresh-workspace">
             <button type="submit" class="btn-action">更新知识库</button>
         </form>
+        <a href="/content/new" class="btn-action">添加新内容</a>
+        <a href="/tasks" class="btn-action btn-secondary">
+            整理任务
+            {% if active_task_count > 0 %}
+            <span style="background:var(--accent);color:#fff;border-radius:10px;padding:0 6px;font-size:0.7rem;margin-left:4px">{{ active_task_count }}</span>
+            {% endif %}
+        </a>
         <a href="/reports" class="btn-action btn-secondary">浏览报告</a>
+        <a href="/sources/channels" class="btn-action btn-secondary">信息源</a>
         {% if research_brief %}
         <a href="/briefs/latest" class="btn-action btn-secondary">研究简报</a>
         {% endif %}
-        <a href="/content/new" class="btn-action btn-secondary">添加新内容</a>
     </div>
+
+    {% if active_task_count > 0 %}
+    <div class="alert" style="background:var(--bg-soft);border-left:3px solid var(--accent);margin-bottom:16px">
+        <p style="margin:0;font-size:0.84rem">
+            📋 有 <strong>{{ active_task_count }}</strong> 个整理任务正在进行 — <a href="/tasks">查看进度</a>
+        </p>
+    </div>
+    {% endif %}
+
+    {% if needs_repair %}
+    <div class="alert alert-error" style="margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <div>
+                <strong>知识库结构不完整</strong>
+                {% if missing_dirs %}<br>缺失目录: {{ missing_dirs[:3]|join(', ') }}{% if missing_dirs|length > 3 %} 等 {{ missing_dirs|length }} 个{% endif %}{% endif %}
+                {% if missing_files %}<br>缺失文件: {{ missing_files[:3]|join(', ') }}{% if missing_files|length > 3 %} 等 {{ missing_files|length }} 个{% endif %}{% endif %}
+            </div>
+            <form method="post" action="/setup/vault/repair" style="display:inline">
+                <button type="submit" class="btn-action" style="white-space:nowrap">一键修复</button>
+            </form>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- ── 研究摘要 ── -->
     {% if research_brief and research_brief.summary %}
@@ -168,7 +198,16 @@
                 <h2>推荐阅读</h2>
                 <ul class="brief-list">
                     {% for r in research_brief.recommended_reports %}
-                    <li>{{ r.channel }} — {{ r.title }} <a href="/reports" class="btn-sm" style="margin-left:8px">查看</a></li>
+                    <li>
+                        {% if r.channel %}{{ r.channel }} — {% endif %}{{ r.title }}
+                        {% if r.report_id %}
+                        <a href="/reports/{{ r.report_id }}" class="btn-sm" style="margin-left:8px">查看</a>
+                        {% elif r.video_id %}
+                        <a href="/search?q={{ r.video_id | urlencode }}" class="btn-sm" style="margin-left:8px">查找</a>
+                        {% else %}
+                        <a href="/search?q={{ r.title | urlencode }}" class="btn-sm" style="margin-left:8px">查找</a>
+                        {% endif %}
+                    </li>
                     {% endfor %}
                 </ul>
             </section>

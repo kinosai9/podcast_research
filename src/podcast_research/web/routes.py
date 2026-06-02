@@ -1,11 +1,11 @@
-"""P1-C / P2-I.2: HTML pages + actions — /dashboard /reports /patches /search + POST actions"""
+"""P1-C / P2-I.2 / P2-K.2.1: HTML pages + actions — /dashboard /reports /tasks /patches /search + POST actions"""
 
 import os
 import re
 from pathlib import Path
 
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader
 
 from podcast_research.db.repository import (
@@ -26,7 +26,8 @@ _env = Environment(
 
 
 def _get_vault_path() -> str:
-    return os.getenv("OBSIDIAN_VAULT_PATH", "")
+    from podcast_research.config_store import get_user_vault_path
+    return get_user_vault_path()
 
 
 def _flash(request: Request) -> dict:
@@ -146,6 +147,34 @@ def _build_recommendations(
     return items
 
 
+def _enrich_recommended_with_report_ids(recs: list[dict]) -> None:
+    """Look up DB report_id by video_id and add to recommended report dicts (mutates in-place)."""
+    video_ids = [r.get("video_id", "") for r in recs if r.get("video_id")]
+    if not video_ids:
+        return
+    from podcast_research.db.models import Episode, Report
+    session = _get_session()
+    try:
+        rows = (
+            session.query(Report.id, Episode.video_id)
+            .join(Episode, Report.episode_id == Episode.id)
+            .filter(Episode.video_id.in_(video_ids))
+            .order_by(Report.id.desc())
+            .all()
+        )
+    finally:
+        session.close()
+    # Build map: video_id → latest report_id
+    vid_to_rid: dict[str, int] = {}
+    for rid, vid in rows:
+        if vid not in vid_to_rid:
+            vid_to_rid[vid] = rid
+    for r in recs:
+        vid = r.get("video_id", "")
+        if vid and vid in vid_to_rid:
+            r["report_id"] = vid_to_rid[vid]
+
+
 def _build_dashboard_context(vault_path: Path) -> dict:
     """Build dashboard data from vault scan. Returns context dict or error info."""
     from podcast_research.workspace.scanner import VaultScanner
@@ -230,6 +259,9 @@ def _build_dashboard_context(vault_path: Path) -> dict:
     try:
         from podcast_research.workspace.research_brief import generate_brief
         research_brief = generate_brief(snapshot)
+        # Enrich recommended_reports with DB report_ids for direct linking
+        if research_brief and research_brief.recommended_reports:
+            _enrich_recommended_with_report_ids(research_brief.recommended_reports)
     except Exception:
         research_brief = None
 
@@ -275,6 +307,147 @@ def page_index(request: Request):
     return RedirectResponse(url="/reports", status_code=302)
 
 
+# ── P2-L.1: Vault Setup Wizard ─────────────────────────────────────
+
+
+@router.get("/setup/vault")
+def page_setup_vault(request: Request):
+    """First-run vault setup page."""
+    vault_path_str = _get_vault_path()
+    ctx = {"request": request, "vault_path": vault_path_str,
+           "vault_missing": not Path(vault_path_str).exists() if vault_path_str else True}
+    ctx.update(_flash(request))
+    return _render("setup_vault.html", ctx)
+
+
+@router.get("/setup/browse-folder")
+def api_browse_folder():
+    """Open a native OS folder picker dialog and return the selected path.
+
+    On Windows: uses PowerShell + .NET FolderBrowserDialog (always on top).
+    On other platforms: falls back to tkinter subprocess.
+    """
+    import platform
+    import subprocess
+    import sys
+
+    if platform.system() == "Windows":
+        ps_script = r"""
+Add-Type -AssemblyName System.Windows.Forms
+$d = New-Object System.Windows.Forms.FolderBrowserDialog
+$d.Description = "选择知识库文件夹 — 选择后点击确定"
+$d.ShowNewFolderButton = $true
+$d.RootFolder = "MyComputer"
+if ($d.ShowDialog() -eq 'OK') {
+    Write-Output $d.SelectedPath
+}
+"""
+        try:
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_script],
+                capture_output=True, text=True, timeout=120,
+            )
+            selected = proc.stdout.strip()
+            if selected:
+                return JSONResponse({"path": selected, "error": None})
+            elif proc.stderr.strip():
+                return JSONResponse({"path": "", "error": f"对话框错误: {proc.stderr.strip()[:200]}"})
+            else:
+                return JSONResponse({"path": "", "error": "未选择文件夹"})
+        except subprocess.TimeoutExpired:
+            return JSONResponse({"path": "", "error": "选择超时"})
+        except Exception as e:
+            return JSONResponse({"path": "", "error": str(e)})
+
+    # Non-Windows: try tkinter
+    picker_script = """
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+root.attributes("-topmost", True)
+root.lift()
+root.focus_force()
+path = filedialog.askdirectory(title="Select Vault Folder", mustexist=False)
+root.destroy()
+if path:
+    print(path)
+"""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", picker_script],
+            capture_output=True, text=True, timeout=120,
+        )
+        selected = proc.stdout.strip()
+        if selected:
+            return JSONResponse({"path": selected, "error": None})
+        else:
+            return JSONResponse({"path": "", "error": "未选择文件夹"})
+    except subprocess.TimeoutExpired:
+        return JSONResponse({"path": "", "error": "选择超时"})
+    except Exception as e:
+        return JSONResponse({"path": "", "error": str(e)})
+
+
+@router.post("/setup/vault")
+def action_setup_vault(request: Request, vault_path: str = Form("")):
+    """Initialize a vault at the given path."""
+    path_str = vault_path.strip()
+    if not path_str:
+        return RedirectResponse(
+            url="/setup/vault?msg=error:请输入知识库目录路径", status_code=303)
+
+    target = Path(path_str)
+    if not target.is_absolute():
+        return RedirectResponse(
+            url="/setup/vault?msg=error:请输入完整的绝对路径", status_code=303)
+
+    try:
+        from podcast_research.workspace.setup import initialize_vault
+        result = initialize_vault(target)
+
+        from podcast_research.config_store import save_user_vault_path
+        save_user_vault_path(target)
+
+        created = len(result.created_dirs) + len(result.created_files)
+        if result.warnings:
+            return RedirectResponse(
+                url=f"/dashboard?msg=success:知识库已初始化（{created} 项），{result.warnings[0]}",
+                status_code=303)
+        return RedirectResponse(
+            url=f"/dashboard?msg=success:知识库已初始化，创建了 {created} 个目录和文件",
+            status_code=303)
+    except PermissionError:
+        return RedirectResponse(
+            url="/setup/vault?msg=error:无法在该路径创建文件，请检查权限。", status_code=303)
+    except OSError as e:
+        return RedirectResponse(
+            url=f"/setup/vault?msg=error:无法创建目录: {e}", status_code=303)
+    except Exception as e:
+        return RedirectResponse(
+            url=f"/setup/vault?msg=error:初始化失败: {e}", status_code=303)
+
+
+@router.post("/setup/vault/repair")
+def action_repair_vault(request: Request):
+    """Repair an incomplete vault by creating missing dirs and files."""
+    vault_path_str = _get_vault_path()
+    if not vault_path_str:
+        return RedirectResponse(url="/setup/vault", status_code=302)
+
+    target = Path(vault_path_str)
+    try:
+        from podcast_research.workspace.setup import repair_vault
+        result = repair_vault(target)
+        created = len(result.created_dirs) + len(result.created_files)
+        return RedirectResponse(
+            url=f"/dashboard?msg=success:知识库已修复，补齐了 {created} 项缺失内容",
+            status_code=303)
+    except Exception as e:
+        return RedirectResponse(
+            url=f"/dashboard?msg=error:修复失败: {e}", status_code=303)
+
+
 @router.get("/dashboard")
 def page_dashboard(request: Request):
     vault_path_str = _get_vault_path()
@@ -282,16 +455,34 @@ def page_dashboard(request: Request):
            "summary": {}, "recommendations": [], "watchlist_items": [],
            "watchlist_configured": False,
            "core_topics": [], "core_companies": [],
-           "pending_patches": [], "review_claims": [], "review_signals": [], "recent_reports": []}
+           "pending_patches": [], "review_claims": [], "review_signals": [], "recent_reports": [],
+           "active_task_count": 0, "needs_repair": False, "missing_dirs": [],
+           "missing_files": []}
     ctx.update(_flash(request))
+    try:
+        from podcast_research.services.job_service import count_active_jobs
+        ctx["active_task_count"] = count_active_jobs()
+    except Exception:
+        pass
 
     if not vault_path_str:
-        return _render("dashboard.html", ctx)
+        return RedirectResponse(url="/setup/vault", status_code=302)
 
     vp = Path(vault_path_str)
     if not vp.exists():
         ctx["vault_missing"] = True
         return _render("dashboard.html", ctx)
+
+    # Check vault health — show repair banner if structure incomplete
+    try:
+        from podcast_research.workspace.setup import validate_vault
+        health = validate_vault(vp)
+        if not health.is_initialized:
+            ctx["needs_repair"] = True
+            ctx["missing_dirs"] = health.missing_dirs
+            ctx["missing_files"] = health.missing_files
+    except Exception:
+        pass
 
     try:
         ctx.update(_build_dashboard_context(vp))
@@ -516,8 +707,12 @@ def action_content_analyze(
     focus: str = Form(""),
     depth: str = Form("standard"),
     mock_mode: bool = Form(False),
+    flow_mode: str = Form("full"),
 ):
-    """Submit a YouTube URL for analysis."""
+    """Submit a YouTube URL for analysis.
+
+    flow_mode: "full" = analyze + auto sync (full_flow), "report_only" = analysis only.
+    """
     from podcast_research.utils.youtube import is_youtube_url, extract_video_id
 
     # Validate URL
@@ -538,6 +733,8 @@ def action_content_analyze(
     if depth not in ("standard", "deep"):
         depth = "standard"
 
+    auto_sync = flow_mode not in ("report_only", "analysis")
+
     # Create job and start background analysis
     from podcast_research.services.job_service import create_job, start_job
     job = create_job(
@@ -545,39 +742,155 @@ def action_content_analyze(
         focus_areas=focus_areas,
         depth=depth,
         mock=mock_mode,
+        auto_sync=auto_sync,
     )
     start_job(job)
-    return RedirectResponse(url=f"/content/jobs/{job.job_id}", status_code=303)
+    return RedirectResponse(url=f"/tasks/{job.job_id}", status_code=303)
+
+
+# ── P2-K.1: Old job routes — redirect to unified /tasks ────────────
 
 
 @router.get("/content/jobs/{job_id}")
-def page_content_job(request: Request, job_id: str):
-    """P2-K.1.1: Analysis job progress page."""
-    from podcast_research.services.job_service import get_job
-    job = get_job(job_id)
-    ctx = {"request": request, "job_id": job_id, "job": job,
-           "not_found": job is None}
-    return _render("content_job.html", ctx)
+def page_content_job(job_id: str):
+    """Redirect to unified task detail page."""
+    return RedirectResponse(url=f"/tasks/{job_id}", status_code=301)
 
 
 @router.get("/content/jobs/{job_id}/status")
 def api_job_status(job_id: str):
-    """P2-K.1.1: Job status JSON endpoint for polling."""
+    """Delegate to unified task status API."""
     from fastapi.responses import JSONResponse
-    from podcast_research.services.job_service import get_job
+    from podcast_research.services.job_service import get_job_status
 
-    job = get_job(job_id)
-    if not job:
+    data = get_job_status(job_id)
+    if data is None:
         return JSONResponse({"status": "not_found", "error": "任务不存在或已过期"}, status_code=404)
+    return JSONResponse(data)
 
-    return JSONResponse({
-        "status": job.status,
-        "stage": job.stage,
-        "message": job.message,
-        "report_id": job.report_id,
-        "report_url": f"/reports/{job.report_id}" if job.report_id else None,
-        "error": job.error,
-    })
+
+# ── P2-K.2: Old sync job routes — redirect to unified /tasks ───────
+
+
+@router.post("/reports/{report_id}/sync")
+def action_reports_sync(request: Request, report_id: int):
+    """Create a knowledge sync job and redirect to unified task page."""
+    vault_path_str = _get_vault_path()
+    if not vault_path_str:
+        return RedirectResponse(
+            url=f"/reports/{report_id}?msg=error:知识库路径尚未配置，请检查 OBSIDIAN_VAULT_PATH。",
+            status_code=303)
+
+    vp = Path(vault_path_str)
+    if not vp.exists():
+        return RedirectResponse(
+            url=f"/reports/{report_id}?msg=error:知识库路径不存在: {vault_path_str}",
+            status_code=303)
+
+    # Verify report exists
+    session = _get_session()
+    try:
+        report = get_report_detail(session, report_id)
+    finally:
+        session.close()
+
+    if not report:
+        return RedirectResponse(
+            url="/reports?msg=error:没有找到这份报告，可能已被删除或尚未生成。",
+            status_code=303)
+
+    # Create sync job
+    from podcast_research.services.job_service import create_sync_job, start_sync_job
+    job = create_sync_job(report_id=report_id)
+    start_sync_job(job)
+
+    return RedirectResponse(url=f"/tasks/{job.job_id}", status_code=303)
+
+
+@router.get("/sync/jobs/{job_id}")
+def page_sync_job(request: Request, job_id: str):
+    """Redirect to unified task detail page."""
+    return RedirectResponse(url=f"/tasks/{job_id}", status_code=301)
+
+
+@router.get("/sync/jobs/{job_id}/status")
+def api_sync_job_status(job_id: str):
+    """Delegate to unified task status API."""
+    from fastapi.responses import JSONResponse
+    from podcast_research.services.job_service import get_job_status
+
+    data = get_job_status(job_id)
+    if data is None:
+        return JSONResponse({"status": "not_found", "error": "任务不存在或已过期"}, status_code=404)
+    return JSONResponse(data)
+
+
+# ── P2-K.2.1: Unified Task Routes ──────────────────────────────────
+
+
+@router.get("/tasks")
+def page_tasks(request: Request):
+    """Unified task list page — shows all recent jobs."""
+    from podcast_research.services.job_service import list_jobs, JOB_TYPE_LABELS, _now_epoch, _compute_elapsed, _ALL_STAGES
+
+    raw_jobs = list_jobs(limit=50)
+    now = _now_epoch()
+    jobs = []
+    for j in raw_jobs:
+        elapsed = _compute_elapsed(j, now)
+        jobs.append({
+            "job_id": j.job_id,
+            "title": j.title or JOB_TYPE_LABELS.get(j.job_type, j.job_type),
+            "job_type": j.job_type,
+            "job_type_label": JOB_TYPE_LABELS.get(j.job_type, j.job_type),
+            "status": j.status,
+            "stage": j.stage,
+            "stage_label": _ALL_STAGES.get(j.stage, j.stage),
+            "elapsed_seconds": elapsed,
+            "elapsed_display": _format_elapsed(elapsed),
+            "report_id": j.report_id,
+            "result_links": j.result_links,
+            "created_at": j.created_at,
+        })
+
+    ctx = {"request": request, "jobs": jobs}
+    ctx.update(_flash(request))
+    return _render("task_list.html", ctx)
+
+
+@router.get("/tasks/{job_id}")
+def page_task_detail(request: Request, job_id: str):
+    """Unified task detail page — renders task progress UI."""
+    from podcast_research.services.job_service import get_job
+    job = get_job(job_id)
+    ctx = {"request": request, "job_id": job_id, "job": job,
+           "not_found": job is None}
+    ctx.update(_flash(request))
+    return _render("task_detail.html", ctx)
+
+
+@router.get("/tasks/{job_id}/status")
+def api_task_status(job_id: str):
+    """Unified task status JSON endpoint for polling."""
+    from fastapi.responses import JSONResponse
+    from podcast_research.services.job_service import get_job_status
+
+    data = get_job_status(job_id)
+    if data is None:
+        return JSONResponse({"status": "not_found", "error": "任务不存在或已过期"}, status_code=404)
+    return JSONResponse(data)
+
+
+def _format_elapsed(seconds: int) -> str:
+    if seconds < 0:
+        return "—"
+    if seconds < 60:
+        return f"{seconds} 秒"
+    m, s = divmod(seconds, 60)
+    if m < 60:
+        return f"{m} 分 {s} 秒"
+    h, m = divmod(m, 60)
+    return f"{h} 时 {m} 分"
 
 
 @router.get("/search")
@@ -805,3 +1118,304 @@ def action_signal_status(request: Request, signal_id: str, status: str = Form(..
         return RedirectResponse(url=f"{target}?msg=success:Signal 状态已更新为 {status}", status_code=303)
     except Exception as e:
         return RedirectResponse(url=f"/dashboard?msg=error:更新失败 — {e}", status_code=303)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# P2-M.1: Channel Source Manager
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _build_sources_channels_context(vp_str: str) -> dict:
+    """Build context for /sources/channels page."""
+    from podcast_research.db.repository import list_channels
+
+    session = _get_session()
+    try:
+        channels = list_channels(session)
+    finally:
+        session.close()
+
+    return {
+        "channels": channels,
+        "vault_path": vp_str,
+    }
+
+
+def _build_sources_videos_context(channel_id: int, vp_str: str) -> dict:
+    """Build context for /sources/channels/{id}/videos page."""
+    from podcast_research.db.repository import list_channel_videos, get_channel, detect_video_import_status
+
+    session = _get_session()
+    try:
+        channel = get_channel(session, channel_id)
+        if not channel:
+            return None
+        videos = list_channel_videos(session, channel_id)
+        # Enrich with import status
+        for v in videos:
+            v["import_status"] = detect_video_import_status(session, v["video_id"], vp_str)
+    finally:
+        session.close()
+
+    return {
+        "channel": channel,
+        "videos": videos,
+        "vault_path": vp_str,
+    }
+
+
+_STAGE_LABELS = {
+    "new": "新发现",
+    "analyzed": "已分析",
+    "synced": "已同步",
+    "skipped": "已跳过",
+    "failed": "失败",
+    "processing": "整理中",
+}
+
+_PRIORITY_LABELS = {
+    "core": "核心",
+    "watch": "关注",
+    "archive": "归档",
+}
+
+
+@router.get("/sources/channels")
+def page_sources_channels(request: Request):
+    vp_str = _get_vault_path()
+    if not vp_str:
+        return RedirectResponse(url="/setup/vault?msg=error:请先配置知识库", status_code=303)
+
+    ctx = _build_sources_channels_context(vp_str)
+    ctx["request"] = request
+    ctx.update(_flash(request))
+    ctx["stage_labels"] = _STAGE_LABELS
+    ctx["priority_labels"] = _PRIORITY_LABELS
+    return _render("sources_channels.html", ctx)
+
+
+@router.get("/sources/channels/{channel_id}/videos")
+def page_sources_videos(request: Request, channel_id: int):
+    vp_str = _get_vault_path()
+    if not vp_str:
+        return RedirectResponse(url="/setup/vault?msg=error:请先配置知识库", status_code=303)
+
+    ctx = _build_sources_videos_context(channel_id, vp_str)
+    if ctx is None:
+        return RedirectResponse(url="/sources/channels?msg=error:频道不存在", status_code=303)
+
+    ctx["request"] = request
+    ctx.update(_flash(request))
+    ctx["stage_labels"] = _STAGE_LABELS
+    ctx["priority_labels"] = _PRIORITY_LABELS
+    ctx["channel_id"] = channel_id
+    return _render("sources_videos.html", ctx)
+
+
+@router.post("/sources/channels/add")
+def action_add_channel(
+    request: Request,
+    channel_url: str = Form(...),
+    name: str = Form(""),
+    priority: str = Form("watch"),
+    default_focus: str = Form(""),
+    default_depth: str = Form("standard"),
+):
+    """Add a YouTube channel."""
+    vp_str = _get_vault_path()
+    if not vp_str:
+        return RedirectResponse(url="/setup/vault?msg=error:请先配置知识库", status_code=303)
+
+    from podcast_research.utils.youtube import extract_channel_id, is_youtube_url
+    from podcast_research.db.repository import upsert_channel
+
+    if not is_youtube_url(channel_url) and "youtube.com" not in channel_url.lower():
+        return RedirectResponse(
+            url="/sources/channels?msg=error:请输入有效的 YouTube 频道 URL",
+            status_code=303,
+        )
+
+    try:
+        yt_channel_id = extract_channel_id(channel_url)
+    except ValueError as e:
+        return RedirectResponse(
+            url=f"/sources/channels?msg=error:无法识别频道 ID — {e}",
+            status_code=303,
+        )
+
+    session = _get_session()
+    try:
+        ch_id = upsert_channel(
+            session,
+            youtube_channel_id=yt_channel_id,
+            name=name or yt_channel_id,
+            url=channel_url,
+            priority=priority,
+            default_focus=default_focus,
+            default_depth=default_depth,
+        )
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        return RedirectResponse(
+            url=f"/sources/channels?msg=error:添加失败 — {e}",
+            status_code=303,
+        )
+    finally:
+        session.close()
+
+    return RedirectResponse(
+        url=f"/sources/channels/{ch_id}/videos?msg=success:频道已添加，可同步视频列表",
+        status_code=303,
+    )
+
+
+@router.post("/sources/channels/{channel_id}/refresh")
+def action_refresh_channel(request: Request, channel_id: int):
+    """Sync channel videos from YouTube."""
+    vp_str = _get_vault_path()
+    if not vp_str:
+        return RedirectResponse(url="/setup/vault?msg=error:请先配置知识库", status_code=303)
+
+    from podcast_research.db.repository import (
+        get_channel, upsert_channel_video, refresh_channel_timestamp,
+    )
+
+    session = _get_session()
+    try:
+        channel = get_channel(session, channel_id)
+        if not channel:
+            return RedirectResponse(url="/sources/channels?msg=error:频道不存在", status_code=303)
+    finally:
+        pass  # keep session open for refresh
+
+    channel_url = channel["url"]
+    try:
+        from podcast_research.adapters.channel_video_adapter import ChannelVideoAdapter
+        adapter = ChannelVideoAdapter()
+        video_items = adapter.fetch_channel_videos(channel_url, limit=20)
+    except Exception as e:
+        session.close()
+        return RedirectResponse(
+            url=f"/sources/channels/{channel_id}/videos?msg=error:同步失败: {e}",
+            status_code=303,
+        )
+
+    new_count = 0
+    upsert_count = 0
+    try:
+        for item in video_items:
+            is_new = upsert_channel_video(
+                session,
+                channel_id=channel_id,
+                video_id=item.video_id,
+                title=item.title,
+                url=item.url,
+                published_at=item.published_at,
+                duration_seconds=item.duration_seconds,
+            )
+            if is_new:
+                new_count += 1
+            else:
+                upsert_count += 1
+        refresh_channel_timestamp(session, channel_id)
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        session.close()
+        return RedirectResponse(
+            url=f"/sources/channels/{channel_id}/videos?msg=error:写入失败 — {e}",
+            status_code=303,
+        )
+    finally:
+        session.close()
+
+    return RedirectResponse(
+        url=f"/sources/channels/{channel_id}/videos?msg=success:同步完成，新增 {new_count} 个视频，更新 {upsert_count} 个",
+        status_code=303,
+    )
+
+
+@router.post("/sources/channels/{channel_id}/videos/{video_id}/skip")
+def action_skip_video(request: Request, channel_id: int, video_id: str):
+    """Mark a video as skipped."""
+    from podcast_research.db.repository import get_channel_video_by_video_id, update_channel_video_status
+
+    session = _get_session()
+    try:
+        cv = get_channel_video_by_video_id(session, video_id)
+        if cv:
+            update_channel_video_status(session, cv["id"], "skipped")
+        session.commit()
+    finally:
+        session.close()
+
+    return RedirectResponse(
+        url=f"/sources/channels/{channel_id}/videos?msg=success:已跳过",
+        status_code=303,
+    )
+
+
+@router.post("/sources/channels/{channel_id}/videos/{video_id}/import")
+def action_import_video(
+    request: Request,
+    channel_id: int,
+    video_id: str,
+    focus: str = Form(""),
+    depth: str = Form("standard"),
+    flow_mode: str = Form("full"),
+):
+    """Import a video from channel list — creates a full_flow job."""
+    from podcast_research.db.repository import (
+        get_channel, get_channel_video_by_video_id, update_channel_video_status,
+    )
+    from podcast_research.services.job_service import create_job, start_job
+
+    session = _get_session()
+    try:
+        cv = get_channel_video_by_video_id(session, video_id)
+        if not cv:
+            return RedirectResponse(
+                url=f"/sources/channels/{channel_id}/videos?msg=error:视频不存在",
+                status_code=303,
+            )
+
+        video_url = cv["url"] or f"https://www.youtube.com/watch?v={video_id}"
+        video_title = cv.get("title", video_id)
+
+        # Get channel defaults
+        channel = get_channel(session, channel_id)
+        if not focus and channel:
+            focus = channel.get("default_focus", "")
+        if depth == "standard" and channel:
+            depth = channel.get("default_depth", "standard")
+
+        # Mark as processing before creating job
+        update_channel_video_status(session, cv["id"], "processing")
+        session.commit()
+    finally:
+        session.close()
+
+    focus_areas = [f.strip() for f in focus.split(",") if f.strip()] if focus else ["通用投资研究"]
+
+    job = create_job(
+        youtube_url=video_url,
+        focus_areas=focus_areas,
+        depth=depth,
+        mock=False,
+        auto_sync=(flow_mode == "full"),
+        title=video_title,
+    )
+
+    # Update channel_video with job tracking
+    session2 = _get_session()
+    try:
+        cv2 = get_channel_video_by_video_id(session2, video_id)
+        if cv2:
+            update_channel_video_status(session2, cv2["id"], "processing")
+        session2.commit()
+    finally:
+        session2.close()
+
+    start_job(job)
+
+    return RedirectResponse(url=f"/tasks/{job.job_id}", status_code=303)

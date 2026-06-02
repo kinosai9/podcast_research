@@ -16,6 +16,38 @@ from podcast_research.llm_wiki.context_builder import HIGH_VALUE_COMPANIES
 logger = logging.getLogger(__name__)
 
 
+def _extract_source_reports(content: str, fm: dict) -> list[str]:
+    """Extract source report filenames from frontmatter OR markdown body.
+
+    Priority: frontmatter source_reports field. Fallback: parse ## Source Reports
+    section from markdown body for wikilinks like [[filename]].
+    """
+    # Frontmatter takes priority
+    fm_reports = fm.get("source_reports", [])
+    if isinstance(fm_reports, list) and fm_reports:
+        return fm_reports
+
+    # Fallback: parse body
+    reports: list[str] = []
+    in_section = False
+    for line in content.split("\n"):
+        stripped = line.strip()
+        if stripped == "## Source Reports":
+            in_section = True
+            continue
+        if in_section and stripped.startswith("## "):
+            break
+        if in_section and "[[" in stripped:
+            # Extract filename from [[filename]] or [[filename|alias]]
+            start = stripped.find("[[")
+            end = stripped.find("]]", start)
+            if start >= 0 and end > start:
+                link = stripped[start + 2:end]
+                filename = link.split("|")[0].split("#")[0]
+                reports.append(filename)
+    return reports
+
+
 # ── Info dataclasses ──────────────────────────────────────────────
 
 
@@ -344,9 +376,7 @@ class VaultScanner:
                 logger.warning(f"Cannot read topic: {p}")
                 continue
             fm = _parse_frontmatter(content)
-            source_reports = fm.get("source_reports", [])
-            if not isinstance(source_reports, list):
-                source_reports = []
+            source_reports = _extract_source_reports(content, fm)
             results.append(TopicInfo(
                 name=p.stem,
                 path=p,
@@ -373,9 +403,7 @@ class VaultScanner:
                 logger.warning(f"Cannot read company: {p}")
                 continue
             fm = _parse_frontmatter(content)
-            source_reports = fm.get("source_reports", [])
-            if not isinstance(source_reports, list):
-                source_reports = []
+            source_reports = _extract_source_reports(content, fm)
             results.append(CompanyInfo(
                 name=p.stem,
                 path=p,

@@ -6,6 +6,7 @@ from pathlib import Path
 from podcast_research.adapters.youtube_transcript import YouTubeTranscriptAdapter
 from podcast_research.analysis.pipeline import analyze_from_transcript
 from podcast_research.config import TRANSCRIPT_CACHE_DIR, ensure_dirs
+from podcast_research.utils.youtube import extract_video_id
 
 
 @dataclass
@@ -14,6 +15,48 @@ class AnalyzeResult:
     report_id: int = 0
     message: str = ""
     error_type: str = ""  # invalid_url / no_subtitle / llm_config / token_limit / unknown
+
+
+def _backfill_channel_metadata(video_id: str) -> dict | None:
+    """Look up channel metadata from channel_videos + channels tables.
+
+    Returns dict with keys matching source_info_override if found, or None.
+    """
+    import json
+    try:
+        from podcast_research.db.session import init_db, get_session
+        from podcast_research.db.models import Channel, ChannelVideo
+
+        init_db()
+        session = get_session()
+        try:
+            cv = session.query(ChannelVideo).filter_by(video_id=video_id).first()
+            if not cv:
+                return None
+
+            channel = session.query(Channel).filter_by(id=cv.channel_id).first()
+            if not channel:
+                return None
+
+            tags = []
+            if channel.tags and channel.tags != "[]":
+                try:
+                    tags = json.loads(channel.tags)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            return {
+                "channel_name": channel.name,
+                "channel_url": channel.url,
+                "channel_tags": tags,
+                "video_title": cv.title or "",
+                "video_url": cv.url or f"https://www.youtube.com/watch?v={video_id}",
+                "published_at": cv.published_at or "",
+            }
+        finally:
+            session.close()
+    except Exception:
+        return None
 
 
 def analyze_youtube_url(
@@ -62,7 +105,25 @@ def analyze_youtube_url(
             message=f"无法获取该视频的字幕。请确认链接是否有效。",
         )
 
-    # 2. Run pipeline
+    # 2. Backfill channel metadata from DB (P2-L.2: fix channel metadata loss)
+    video_id = transcript.video_id
+    source_info_override = _backfill_channel_metadata(video_id)
+    if source_info_override:
+        if progress_callback:
+            progress_callback(
+                "backfill_channel",
+                f"已匹配频道信息: {source_info_override.get('channel_name', '')}"
+            )
+    else:
+        # No channel metadata found — log warning
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            f"No channel metadata found for video_id={video_id}. "
+            f"Report will use fallback channel name."
+        )
+
+    # 3. Run pipeline
     if progress_callback:
         progress_callback("analyzing", "正在进行 AI 分析")
     try:
@@ -71,6 +132,7 @@ def analyze_youtube_url(
             provider_name=provider,
             focus_areas=focus_areas,
             analysis_depth=depth,
+            source_info_override=source_info_override,  # P2-L.2: ensure channel metadata flows through
         )
         report_id = result.get("report_id", 0)
         return AnalyzeResult(

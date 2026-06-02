@@ -67,6 +67,56 @@ def get_llm_provider(provider_name: str) -> LLMProvider:
     raise ValueError(f"不支持的 LLM provider: {provider_name}，可选: mock, openai-compatible")
 
 
+def _validate_report_language(report_md: str, episode_title: str) -> None:
+    """P2-L.2: Validate report language consistency.
+
+    Checks that the report has a reasonable Chinese character ratio.
+    Source quotes (blockquotes) are excluded from the check since they
+    may legitimately be in the original transcript language.
+    """
+    # Remove frontmatter (--- blocks)
+    body = report_md
+    while body.startswith("---"):
+        end = body.find("---", 3)
+        if end == -1:
+            break
+        body = body[end + 3:]
+
+    # Remove source quote lines (> blockquotes)
+    lines = body.split("\n")
+    check_lines = [
+        l for l in lines
+        if not l.strip().startswith(">")
+        and not l.strip().startswith("|")
+        and not l.strip().startswith("[[")
+        and not l.strip().startswith("- [[")
+        and len(l.strip()) > 10
+    ]
+    check_text = "\n".join(check_lines)
+
+    # Count Chinese characters
+    total_alpha = sum(1 for ch in check_text if ch.isalpha())
+    chinese_chars = sum(1 for ch in check_text if '一' <= ch <= '鿿')
+
+    if total_alpha == 0 and chinese_chars == 0:
+        return  # Empty report, skip
+
+    chinese_ratio = chinese_chars / max(total_alpha + chinese_chars, 1)
+
+    if chinese_ratio < 0.10:
+        logger.warning(
+            "Report language consistency LOW for '%s': Chinese ratio %.1f%% (total %d chars). "
+            "Report may contain untranslated English sections. "
+            "Consider re-running or checking LLM prompt compliance.",
+            episode_title, chinese_ratio * 100, len(check_text),
+        )
+    else:
+        logger.info(
+            "Report language check passed for '%s': Chinese ratio %.1f%%",
+            episode_title, chinese_ratio * 100,
+        )
+
+
 def _run_pipeline(
     segments: list[SubtitleSegment],
     episode_title: str,
@@ -195,6 +245,9 @@ def _run_pipeline(
     # 3. 生成报告
     logger.info("生成 Markdown 报告")
     report_md = provider.render_report(extraction)
+
+    # P2-L.2: Language consistency validation
+    _validate_report_language(report_md, episode_title)
 
     # 4. 入库
     init_db()

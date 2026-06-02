@@ -198,7 +198,7 @@ entity_type 从以下枚举选择：
 - 任何情况下都不得输出投资建议（如 "建议买入"、"值得持有" 等）。
 - source_quote 和 timestamp_start 缺失的观点视为无效，不输出。
 - 宁缺毋滥：不确定是否属于 investment_view 的，先放 tech_industry_insights 或 uncertain_items。
-- 英文内容用英文输出逻辑链，中文内容用中文输出。不跑偏到非 Tech/AI 领域。"""
+- 所有文本字段（logic_chain、evidence_detail、insight、signal、risk、summary 等）必须用中文输出。英文技术术语和公司名保留原文，但描述和分析必须用中文。即使在处理英文字幕时，输出也必须是中文。不跑偏到非 Tech/AI 领域。"""
 
 EXTRACT_FACTS_USER = """请从以下播客字幕中抽取投资相关事实。
 
@@ -245,7 +245,7 @@ RENDER_REPORT_SYSTEM = """你是 Tech/AI 投资研究内容整理助手。
 - 原文引用用 > blockquote 格式。
 - 所有时间戳保留原始格式（HH:MM:SS）。
 - Tech/Industry Insights 标注 investment_implication（high/medium/low/none）和 topic_tags。
-- 使用中文撰写报告正文，但保留英文的技术术语和公司名。
+- 使用中文撰写报告全文（包括正文、表格、逻辑链列、证据列等所有内容）。仅保留英文技术术语和公司名原文。如果 extraction JSON 中某个字段是英文，必须翻译为中文后再写入报告。
 
 ## 严格禁止
 

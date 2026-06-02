@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}信息源 — 频道管理{% endblock %}
+{% block content %}
+
+{% if flash_msg %}
+<div class="alert alert-{{ flash_type }}">{{ flash_msg }}</div>
+{% endif %}
+
+<div class="page-header">
+    <h2>信息源管理</h2>
+    <p class="subtitle">管理 YouTube 频道信息源，同步最新视频并选择有价值的内容整理进知识库。</p>
+</div>
+
+<!-- ── Add Channel Form ── -->
+<div class="card" style="margin-bottom:24px">
+    <h3>添加频道</h3>
+    <form method="post" action="/sources/channels/add" class="form-row">
+        <div class="form-group" style="flex:2">
+            <label for="channel_url">YouTube 频道 URL</label>
+            <input type="text" id="channel_url" name="channel_url" required
+                   placeholder="https://www.youtube.com/@ChannelHandle">
+        </div>
+        <div class="form-group" style="flex:1">
+            <label for="name">频道名称 (可选)</label>
+            <input type="text" id="name" name="name" placeholder="自动识别">
+        </div>
+        <div class="form-group">
+            <label for="priority">优先级</label>
+            <select id="priority" name="priority">
+                <option value="watch" selected>关注</option>
+                <option value="core">核心</option>
+                <option value="archive">归档</option>
+            </select>
+        </div>
+        <div class="form-group" style="flex:1">
+            <label for="default_focus">默认关注领域</label>
+            <input type="text" id="default_focus" name="default_focus"
+                   placeholder="AI Infrastructure">
+        </div>
+        <div class="form-group" style="flex:0 1 140px">
+            <label for="default_depth">默认分析深度</label>
+            <select id="default_depth" name="default_depth">
+                <option value="standard" selected>标准</option>
+                <option value="deep">深入</option>
+            </select>
+        </div>
+        <div class="form-group" style="align-self:flex-end">
+            <button type="submit" class="btn-action">添加</button>
+        </div>
+    </form>
+</div>
+
+<!-- ── Channel List ── -->
+{% if channels %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>频道</th>
+            <th>优先级</th>
+            <th>关注领域</th>
+            <th>视频</th>
+            <th>最后刷新</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for ch in channels %}
+        <tr>
+            <td>
+                <strong>{{ ch.name or ch.youtube_channel_id }}</strong>
+                {% if ch.url %}
+                <br><small><a href="{{ ch.url }}" target="_blank" rel="noopener">{{ ch.url[:50] }}{% if ch.url|length > 50 %}...{% endif %}</a></small>
+                {% endif %}
+            </td>
+            <td>
+                <span class="badge badge-{{ ch.priority }}">{{ priority_labels.get(ch.priority, ch.priority) }}</span>
+            </td>
+            <td>{{ ch.default_focus or '-' }}</td>
+            <td>
+                {% if ch.total_videos > 0 %}
+                {{ ch.total_videos }} 个
+                {% if ch.video_counts %}
+                <br><small>
+                {% for st, cnt in ch.video_counts.items() %}
+                {{ stage_labels.get(st, st) }}: {{ cnt }}{% if not loop.last %} · {% endif %}
+                {% endfor %}
+                </small>
+                {% endif %}
+                {% else %}
+                0 个
+                {% endif %}
+            </td>
+            <td>{{ ch.last_refreshed_at.strftime('%Y-%m-%d %H:%M') if ch.last_refreshed_at else '从未' }}</td>
+            <td class="actions">
+                <a href="/sources/channels/{{ ch.id }}/videos" class="btn-action btn-sm">查看视频</a>
+                <form method="post" action="/sources/channels/{{ ch.id }}/refresh" style="display:inline">
+                    <button type="submit" class="btn-action btn-sm btn-secondary">刷新</button>
+                </form>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <p>还没有添加任何频道。使用上方表单添加一个 YouTube 频道。</p>
+</div>
+{% endif %}
+
+<div style="margin-top:24px">
+    <a href="/dashboard" class="btn-action btn-secondary">返回控制台</a>
+    <a href="/content/new" class="btn-action" style="margin-left:8px">直接分析视频</a>
+</div>
+
+{% endblock %}

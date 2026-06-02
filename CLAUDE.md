@@ -14,19 +14,16 @@
 
 ## 当前阶段
 
-P2-J.2（Watchlist Brief）。P0-A 到 P2-J.1 全部交付，683 tests。
+P2-L.1（First-run Vault Setup / Obsidian Vault 初始化向导）。P0-A 到 P2-K.3 全部交付，761 tests。
 
-**当前重点：提升 Obsidian 可用性，不新增外部数据源。**
+**当前重点：零门槛首次使用体验，用户只需指定目录。**
 
-**P2-H.1 新增：**
+**P2-L.1 新增：**
 
-`obsidian workspace refresh` — 扫描 Vault 文件系统，生成 Home.md、99_System/Knowledge Map.md、99_System/Review Queue.md 三个导航/聚合页。不调用 LLM，不连接外部 API，使用 managed block 模式不覆盖用户手工内容。
-
-**P2-H.2 新增：**
-
-`obsidian workspace backfill-relations` — 回填 Claim/Signal 的 related_topics / related_companies 关联。
-`obsidian workspace refresh-curation-status` — 为所有卡片添加 curation_status 字段（raw/indexed/reviewed/enhanced/archived）。
-Review Queue 聚焦 Top-10，Home/Knowledge Map 增加 Curation 列。
+- `/setup/vault` 初始化向导：用户输入目录路径 → 自动创建完整 Vault 结构
+- 配置持久化到 `data/user_settings.json`，不再要求用户编辑 `.env`
+- Dashboard 自动检测 Vault 健康状态：缺失结构时显示「一键修复」
+- 非空目录安全：只补齐缺失文件，不删除不覆盖已有内容
 
 **P0 已跑通：**
 

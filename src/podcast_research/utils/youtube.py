@@ -55,3 +55,44 @@ def is_youtube_url(url: str) -> bool:
     except Exception:
         pass
     return False
+
+
+def extract_channel_id(url: str) -> str:
+    """从 YouTube 频道 URL 中提取频道 ID 或 handle。
+
+    支持：
+    - https://www.youtube.com/@ChannelHandle
+    - https://www.youtube.com/channel/UC...
+    - https://www.youtube.com/c/ChannelName
+
+    Returns:
+        频道 ID（如果是 @handle 格式，去除 @ 前缀；如果是 /channel/UC...，返回 UC ID）
+    """
+    parsed = urlparse(url)
+    if not parsed.hostname or "youtube.com" not in parsed.hostname:
+        raise ValueError(f"不是有效的 YouTube 频道 URL: {url}")
+
+    path = parsed.path.rstrip("/")
+
+    # /@Handle format
+    if path.startswith("/@"):
+        channel_id = path[2:]  # remove /@
+        return channel_id
+
+    # /channel/UC... format
+    if "/channel/" in path:
+        idx = path.index("/channel/")
+        channel_id = path[idx + 9:]  # after /channel/
+        if "/" in channel_id:
+            channel_id = channel_id.split("/")[0]
+        return channel_id
+
+    # /c/Name format (legacy)
+    if "/c/" in path:
+        idx = path.index("/c/")
+        channel_id = path[idx + 3:]
+        if "/" in channel_id:
+            channel_id = channel_id.split("/")[0]
+        return channel_id
+
+    raise ValueError(f"无法从 URL 提取频道 ID: {url}")

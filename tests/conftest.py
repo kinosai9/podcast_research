@@ -23,6 +23,9 @@ os.environ["LLM_MODEL"] = "mock-investment-analyst"
 os.environ["OBSIDIAN_VAULT_PATH"] = ""
 os.environ["OBSIDIAN_EXPORT_ENABLED"] = "false"
 
+# P2-L.1: 隔离 config_store，防止测试写入真实 data/user_settings.json
+# conftest 在 import 前设置，但 config_store 是惰性导入的，在 autouse fixture 中处理
+
 import pytest
 
 from podcast_research.analysis.models import (
@@ -131,3 +134,13 @@ def api_client(db_session):
     app = create_app()
     client = TestClient(app)
     return client
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config_store(tmp_path, monkeypatch):
+    """P2-L.1: Isolate config_store to temp dir so tests don't touch real data/user_settings.json."""
+    import podcast_research.config_store as cs
+    settings_file = tmp_path / "user_settings.json"
+    monkeypatch.setattr(cs, "_get_settings_path", lambda: settings_file)
+    # Also reset the module-level cache so it picks up our override
+    monkeypatch.setattr(cs, "_SETTINGS_PATH", settings_file)

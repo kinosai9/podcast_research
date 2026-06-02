@@ -4,9 +4,12 @@
 
 > **本项目不提供投资建议。** 所有输出仅为播客内容的结构化整理，不构成买入、卖出、持有等决策建议。
 
-## 当前阶段：P2-E.2 LLM-WIKI Patch Apply
+## 当前阶段：P2-L.1 First-run Vault Setup
 
-P0 + P1 + P2-A + P2-B + P2-C + P2-D + P2-E + P2-E.1 已完成。P2-E.2 实现了安全的、显式的单文件 patch apply 流程，LLM 生成的 patch 通过 marker 机制追加到目标 Topic Card，支持 dry-run 和人工审阅确认。
+P0 + P1 + P2-A 到 P2-K.3 已完成。P2-L.1 实现了零门槛首次使用体验：
+- 首次使用：安装 Obsidian → 打开 Web Console → 选择一个本地文件夹 → 初始化知识库
+- 系统自动创建完整 Vault 目录结构和基础文件（Watchlist、Home、Getting Started 等）
+- Dashboard 自动检测 Vault 健康状态，缺失结构时可一键修复
 
 ## 快速开始
 
