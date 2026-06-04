@@ -96,6 +96,10 @@
                 <form method="post" action="/sources/channels/{{ ch.id }}/refresh" style="display:inline">
                     <button type="submit" class="btn-action btn-sm btn-secondary">刷新</button>
                 </form>
+                <form method="post" action="/sources/channels/{{ ch.id }}/delete" style="display:inline"
+                      onsubmit="return confirm('确定删除频道「{{ ch.name or ch.youtube_channel_id }}」吗？频道下的视频列表也会被移除。')">
+                    <button type="submit" class="btn-action btn-sm btn-secondary" style="color:#c00">删除</button>
+                </form>
             </td>
         </tr>
     {% endfor %}

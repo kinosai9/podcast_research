@@ -11,6 +11,16 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 
+def _format_upload_date(raw: str) -> str:
+    """Convert yt-dlp YYYYMMDD upload_date to human-readable YYYY-MM-DD."""
+    if not raw:
+        return ""
+    raw = raw.strip()
+    if len(raw) == 8 and raw.isdigit():
+        return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}"
+    return raw  # already formatted or unknown format
+
+
 @dataclass
 class ChannelVideoItem:
     """频道视频元数据。"""
@@ -30,14 +40,18 @@ class ChannelVideoAdapter:
         channel_url: str,
         limit: int = 20,
     ) -> list[ChannelVideoItem]:
-        """获取频道最近视频列表。"""
+        """获取频道最近视频列表。
+
+        不使用 --flat-playlist（该模式不返回 upload_date/timestamp），
+        直接做完整 playlist 提取以获取发布日期。
+        """
         import json
 
         import yt_dlp
 
         opts: dict = {
             "quiet": True,
-            "extract_flat": True,
+            "extract_flat": False,
             "playlistend": limit,
         }
 
@@ -60,11 +74,14 @@ class ChannelVideoAdapter:
             if vid.startswith("UC") and len(vid) == 24:
                 continue
             dur = entry.get("duration", 0) or 0
+            # 非 flat 模式下 upload_date 可用（YYYYMMDD 格式）
+            raw_date = entry.get("upload_date", "") or ""
+            formatted_date = _format_upload_date(raw_date)
             items.append(ChannelVideoItem(
                 video_id=vid,
                 title=entry.get("title", ""),
                 url=f"https://www.youtube.com/watch?v={vid}",
-                published_at=entry.get("upload_date", "") or "",
+                published_at=formatted_date,
                 duration_seconds=int(dur),
                 channel_name=channel_name,
             ))

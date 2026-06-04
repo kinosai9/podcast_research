@@ -43,6 +43,11 @@ _ALL_STAGES: dict[str, str] = {
     # Full_flow stages
     "saving_report": "正在保存报告",
     "syncing_knowledge_base": "正在更新知识库",
+    # Channel refresh stages
+    "fetching_channel": "正在获取频道视频列表",
+    "reading_video_metadata": "正在读取视频发布时间",
+    "checking_import_status": "正在检查已整理状态",
+    "saving_video_list": "正在更新视频列表",
     # Terminal
     "success": "任务已完成",
     "failed": "任务失败",
@@ -53,6 +58,7 @@ JOB_TYPE_LABELS: dict[str, str] = {
     "analysis": "生成报告",
     "sync": "同步知识库",
     "full_flow": "整理进知识库",
+    "channel_refresh": "刷新频道",
 }
 
 # Job-type → page title/description
@@ -60,12 +66,14 @@ JOB_TYPE_TITLES: dict[str, str] = {
     "analysis": "正在生成研究报告",
     "sync": "正在同步到知识库",
     "full_flow": "正在整理进知识库",
+    "channel_refresh": "正在刷新频道视频列表",
 }
 
 JOB_TYPE_DESCRIPTIONS: dict[str, str] = {
     "analysis": "AI 正在获取字幕、拆解观点并生成研究报告。",
     "sync": "系统正在更新 Obsidian、研究摘要和我的关注。",
     "full_flow": "系统会先生成研究报告，再更新知识库、研究摘要和我的关注。长视频可能需要较长时间，你可以离开页面，稍后从「整理任务」查看结果。",
+    "channel_refresh": "系统正在获取 YouTube 频道最新视频列表并读取发布日期。通常需要数十秒。",
 }
 
 
@@ -87,7 +95,7 @@ class AnalysisJob:
     """
 
     job_id: str
-    job_type: str = "analysis"  # "analysis" | "sync"
+    job_type: str = "analysis"  # "analysis" | "sync" | "full_flow" | "channel_refresh"
     status: str = "queued"      # queued | running | long_running | success | failed | stale
     stage: str = "queued"
     message: str = ""
@@ -121,6 +129,11 @@ class AnalysisJob:
     # Result links (populated on success)
     result_links: dict[str, str] = field(default_factory=dict)
 
+    # P2-M.1.1: Source context for status writeback
+    source_type: str = ""       # "channel_video" | "manual" | ""
+    source_channel_id: int | None = None
+    video_id: str = ""
+
 
 # In-memory store
 _JOBS: dict[str, AnalysisJob] = {}
@@ -133,11 +146,13 @@ def create_job(
     depth: str = "standard",
     mock: bool = False,
     auto_sync: bool = False,
+    title: str = "",
 ) -> AnalysisJob:
     """Create a new analysis job.
 
     Args:
         auto_sync: If True, job_type="full_flow" — analysis + sync chained automatically.
+        title: Optional display title (overrides JOB_TYPE_TITLES default).
     """
     job_type = "full_flow" if auto_sync else "analysis"
     job_id = uuid.uuid4().hex[:12]
@@ -147,7 +162,7 @@ def create_job(
         status="queued",
         stage="queued",
         message=_stage_message("queued"),
-        title=JOB_TYPE_TITLES.get(job_type, ""),
+        title=title or JOB_TYPE_TITLES.get(job_type, ""),
         youtube_url=youtube_url,
         focus_areas=focus_areas,
         depth=depth,
@@ -313,22 +328,55 @@ def get_job_status(job_id: str) -> dict[str, Any] | None:
 
     # Build result_links based on job_type and status
     result_links: dict[str, str] = {}
+    checklist: list[str] = []
     if effective_status == "success":
-        if job.job_type == "analysis" and job.report_id:
-            result_links["report"] = f"/reports/{job.report_id}"
-            result_links["sync"] = f"/reports/{job.report_id}/sync"
+        if job.job_type == "analysis":
+            checklist = [
+                "获取视频字幕",
+                "拆解关键信息",
+                "生成研究报告",
+            ]
+            if job.report_id:
+                result_links["report"] = f"/reports/{job.report_id}"
+                result_links["sync"] = f"/reports/{job.report_id}/sync"
         elif job.job_type == "sync":
+            checklist = [
+                "导出报告到 Obsidian",
+                "更新主题和公司卡片",
+                "建立知识关联",
+                "刷新研究摘要",
+                "刷新我的关注",
+            ]
             result_links["brief"] = "/briefs/latest"
             result_links["watchlist"] = "/watchlist"
             result_links["dashboard"] = "/dashboard"
             if job.report_id:
                 result_links["report"] = f"/reports/{job.report_id}"
         elif job.job_type == "full_flow":
+            checklist = [
+                "获取视频字幕",
+                "生成研究报告",
+                "同步到 Obsidian 知识库",
+                "更新主题和公司卡片",
+                "建立知识关联",
+                "刷新研究摘要",
+                "刷新我的关注",
+            ]
             result_links["brief"] = "/briefs/latest"
             result_links["watchlist"] = "/watchlist"
             result_links["dashboard"] = "/dashboard"
             if job.report_id:
                 result_links["report"] = f"/reports/{job.report_id}"
+        elif job.job_type == "channel_refresh":
+            checklist = [
+                "获取频道视频列表",
+                "读取视频发布时间",
+                "检查已整理状态",
+                "更新视频列表",
+            ]
+            if job.source_channel_id:
+                result_links["videos"] = f"/sources/channels/{job.source_channel_id}/videos"
+            result_links["sources"] = "/sources/channels"
     elif effective_status == "failed" and job.job_type == "full_flow" and job.report_id:
         # Sync failed after analysis succeeded — preserve report + retry links
         result_links["report"] = f"/reports/{job.report_id}"
@@ -341,6 +389,18 @@ def get_job_status(job_id: str) -> dict[str, Any] | None:
             "current": job.current_step,
             "total": job.total_steps,
         }
+
+    # Build success message
+    success_msg: str = ""
+    if effective_status == "success":
+        if job.job_type == "analysis":
+            success_msg = "研究报告已生成"
+        elif job.job_type == "sync":
+            success_msg = "知识库已更新"
+        elif job.job_type == "full_flow":
+            success_msg = "整理完成，知识库已更新"
+        elif job.job_type == "channel_refresh":
+            success_msg = "频道视频列表已更新"
 
     return {
         "job_id": job.job_id,
@@ -362,6 +422,8 @@ def get_job_status(job_id: str) -> dict[str, Any] | None:
         "created_at": job.created_at,
         "started_at": job.started_at,
         "result_links": result_links,
+        "checklist": checklist,
+        "success_msg": success_msg,
     }
 
 
@@ -407,6 +469,8 @@ def start_job(job: AnalysisJob, progress_callback: Callable | None = None) -> No
             if not result.success:
                 update_job(job.job_id, status="failed", stage="failed",
                            error=result.message, message=result.message)
+                _writeback_channel_video_status(job, status="failed",
+                                                failure_reason=result.message)
                 return
 
             # Analysis succeeded
@@ -439,19 +503,27 @@ def start_job(job: AnalysisJob, progress_callback: Callable | None = None) -> No
                         message="报告已生成，但知识库更新失败。",
                     )
                     _set_result_links_failed_sync(job.job_id, report_id)
+                    _writeback_channel_video_status(job, status="failed",
+                                                    failure_reason=sync_result.error)
                 else:
                     update_job(job.job_id, status="success", stage="success",
                                message="知识库已更新")
                     _set_result_links(job.job_id, "full_flow", report_id)
+                    _writeback_channel_video_status(job, status="synced",
+                                                    report_id=report_id)
             else:
                 # Analysis only
                 update_job(job.job_id, status="success", stage="success",
                            message="报告已生成")
                 _set_result_links(job.job_id, "analysis", report_id)
+                _writeback_channel_video_status(job, status="analyzed",
+                                                report_id=report_id)
 
         except Exception as e:
             update_job(job.job_id, status="failed", stage="failed",
                        error=str(e), message="整理失败，请稍后重试")
+            _writeback_channel_video_status(job, status="failed",
+                                            failure_reason=str(e))
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
@@ -499,6 +571,49 @@ def start_sync_job(job: AnalysisJob) -> None:
     t.start()
 
 
+def _writeback_channel_video_status(
+    job: AnalysisJob,
+    *,
+    status: str,
+    report_id: int | None = None,
+    failure_reason: str = "",
+) -> None:
+    """Write job result back to channel_videos table if job originated from a channel.
+
+    Called from the job execution thread after analysis/sync succeeds or fails.
+    """
+    if job.source_type != "channel_video" or not job.video_id:
+        return
+    try:
+        from podcast_research.db.session import get_session
+        from podcast_research.db.models import ChannelVideo
+        from datetime import datetime
+        session = get_session()
+        try:
+            cv = session.query(ChannelVideo).filter_by(
+                video_id=job.video_id
+            ).first()
+            if cv:
+                cv.status = status
+                cv.last_checked_at = datetime.now()
+                if report_id is not None:
+                    cv.report_id = report_id
+                if failure_reason:
+                    cv.failure_reason = failure_reason
+                else:
+                    cv.failure_reason = ""
+                session.commit()
+        finally:
+            session.close()
+    except Exception as e:
+        # Don't crash the job thread if DB writeback fails
+        import logging
+        logging.getLogger(__name__).warning(
+            "Channel video status writeback failed for video_id=%s: %s",
+            job.video_id, e,
+        )
+
+
 def _set_result_links(job_id: str, job_type: str, report_id: int | None) -> None:
     """Populate result_links on job success."""
     with _lock:
@@ -520,6 +635,10 @@ def _set_result_links(job_id: str, job_type: str, report_id: int | None) -> None
             links["brief"] = "/briefs/latest"
             links["watchlist"] = "/watchlist"
             links["dashboard"] = "/dashboard"
+        elif job_type == "channel_refresh":
+            if job.source_channel_id:
+                links["videos"] = f"/sources/channels/{job.source_channel_id}/videos"
+            links["sources"] = "/sources/channels"
         job.result_links = links
 
 
@@ -537,3 +656,120 @@ def _set_result_links_failed_sync(job_id: str, report_id: int | None) -> None:
             links["report"] = f"/reports/{report_id}"
             links["sync"] = f"/reports/{report_id}/sync"  # retry
         job.result_links = links
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# P2-M.1.1: Channel Refresh Job
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def create_channel_refresh_job(
+    channel_url: str,
+    channel_name: str,
+    channel_id: int,
+    limit: int = 20,
+) -> AnalysisJob:
+    """Create a channel_refresh job."""
+    job_id = uuid.uuid4().hex[:12]
+    job = AnalysisJob(
+        job_id=job_id,
+        job_type="channel_refresh",
+        status="queued",
+        stage="queued",
+        message=_stage_message("queued"),
+        title=f"刷新频道: {channel_name}",
+        source_url=channel_url,
+        source_type="channel_refresh",
+        source_channel_id=channel_id,
+    )
+    with _lock:
+        _JOBS[job_id] = job
+        _prune_if_needed()
+    return job
+
+
+def start_channel_refresh_job(job: AnalysisJob) -> None:
+    """Start channel refresh in background daemon thread."""
+    def _run():
+        now = _now_epoch()
+        with _lock:
+            if job.job_id in _JOBS:
+                _JOBS[job.job_id].status = "running"
+                _JOBS[job.job_id].stage = "fetching_channel"
+                _JOBS[job.job_id].message = _stage_message("fetching_channel")
+                _JOBS[job.job_id].started_at = _now_iso()
+                _JOBS[job.job_id].last_heartbeat_at = now
+
+        try:
+            from podcast_research.adapters.channel_video_adapter import (
+                ChannelVideoAdapter, ChannelVideoItem,
+            )
+            from podcast_research.db.repository import (
+                upsert_channel_video, refresh_channel_timestamp,
+                detect_video_import_status,
+            )
+            from podcast_research.db.session import get_session
+
+            # Stage 1: Fetch channel videos
+            update_job(job.job_id, stage="fetching_channel",
+                        message="正在通过 yt-dlp 获取频道视频列表")
+            adapter = ChannelVideoAdapter()
+            channel_url = job.source_url
+            video_items = adapter.fetch_channel_videos(channel_url, limit=20)
+
+            if not video_items:
+                update_job(job.job_id, status="failed", stage="failed",
+                           message="未获取到视频列表",
+                           error="频道可能没有公开视频，或链接格式不正确。")
+                return
+
+            # Stage 2: Read video metadata (dates already in items)
+            update_job(job.job_id, stage="reading_video_metadata",
+                        message=f"已获取 {len(video_items)} 个视频，正在处理元数据")
+
+            # Stage 3: Check import status
+            update_job(job.job_id, stage="checking_import_status",
+                        message="正在检查已整理状态")
+
+            # Stage 4: Save to DB
+            update_job(job.job_id, stage="saving_video_list",
+                        message=f"正在将 {len(video_items)} 个视频写入数据库")
+
+            session = get_session()
+            try:
+                new_count = 0
+                upsert_count = 0
+                for item in video_items:
+                    is_new = upsert_channel_video(
+                        session,
+                        channel_id=job.source_channel_id or 0,
+                        video_id=item.video_id,
+                        title=item.title,
+                        url=item.url,
+                        published_at=item.published_at,
+                        duration_seconds=item.duration_seconds,
+                    )
+                    if is_new:
+                        new_count += 1
+                    else:
+                        upsert_count += 1
+                if job.source_channel_id:
+                    refresh_channel_timestamp(session, job.source_channel_id)
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                raise
+            finally:
+                session.close()
+
+            msg = f"新增 {new_count} 个视频，更新 {upsert_count} 个"
+            update_job(job.job_id, status="success", stage="success", message=msg)
+            _set_result_links(job.job_id, "channel_refresh", None)
+
+        except Exception as e:
+            update_job(job.job_id, status="failed", stage="failed",
+                       error=str(e),
+                       message="频道视频列表获取失败，请稍后重试或检查频道链接。")
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()

@@ -1130,7 +1130,7 @@ def _build_sources_channels_context(vp_str: str) -> dict:
 
     session = _get_session()
     try:
-        channels = list_channels(session)
+        channels = list_channels(session, active_only=True)
     finally:
         session.close()
 
@@ -1227,6 +1227,7 @@ def action_add_channel(
 
     from podcast_research.utils.youtube import extract_channel_id, is_youtube_url
     from podcast_research.db.repository import upsert_channel
+    from podcast_research.db.models import Channel
 
     if not is_youtube_url(channel_url) and "youtube.com" not in channel_url.lower():
         return RedirectResponse(
@@ -1244,6 +1245,13 @@ def action_add_channel(
 
     session = _get_session()
     try:
+        existing = session.query(Channel).filter_by(youtube_channel_id=yt_channel_id).first()
+        if existing:
+            return RedirectResponse(
+                url=f"/sources/channels/{existing.id}/videos?msg=success:频道已存在，无需重复添加",
+                status_code=303,
+            )
+
         ch_id = upsert_channel(
             session,
             youtube_channel_id=yt_channel_id,
@@ -1269,15 +1277,50 @@ def action_add_channel(
     )
 
 
-@router.post("/sources/channels/{channel_id}/refresh")
-def action_refresh_channel(request: Request, channel_id: int):
-    """Sync channel videos from YouTube."""
+@router.post("/sources/channels/{channel_id}/delete")
+def action_delete_channel(request: Request, channel_id: int):
+    """Delete (soft-deactivate) a channel."""
     vp_str = _get_vault_path()
     if not vp_str:
         return RedirectResponse(url="/setup/vault?msg=error:请先配置知识库", status_code=303)
 
-    from podcast_research.db.repository import (
-        get_channel, upsert_channel_video, refresh_channel_timestamp,
+    from podcast_research.db.repository import delete_channel
+
+    session = _get_session()
+    try:
+        ok = delete_channel(session, channel_id)
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        return RedirectResponse(
+            url=f"/sources/channels?msg=error:删除失败 — {e}",
+            status_code=303,
+        )
+    finally:
+        session.close()
+
+    if not ok:
+        return RedirectResponse(
+            url="/sources/channels?msg=error:频道不存在",
+            status_code=303,
+        )
+
+    return RedirectResponse(
+        url="/sources/channels?msg=success:频道已删除",
+        status_code=303,
+    )
+
+
+@router.post("/sources/channels/{channel_id}/refresh")
+def action_refresh_channel(request: Request, channel_id: int):
+    """Create a channel_refresh job and redirect to task detail."""
+    vp_str = _get_vault_path()
+    if not vp_str:
+        return RedirectResponse(url="/setup/vault?msg=error:请先配置知识库", status_code=303)
+
+    from podcast_research.db.repository import get_channel
+    from podcast_research.services.job_service import (
+        create_channel_refresh_job, start_channel_refresh_job,
     )
 
     session = _get_session()
@@ -1285,54 +1328,19 @@ def action_refresh_channel(request: Request, channel_id: int):
         channel = get_channel(session, channel_id)
         if not channel:
             return RedirectResponse(url="/sources/channels?msg=error:频道不存在", status_code=303)
-    finally:
-        pass  # keep session open for refresh
-
-    channel_url = channel["url"]
-    try:
-        from podcast_research.adapters.channel_video_adapter import ChannelVideoAdapter
-        adapter = ChannelVideoAdapter()
-        video_items = adapter.fetch_channel_videos(channel_url, limit=20)
-    except Exception as e:
-        session.close()
-        return RedirectResponse(
-            url=f"/sources/channels/{channel_id}/videos?msg=error:同步失败: {e}",
-            status_code=303,
-        )
-
-    new_count = 0
-    upsert_count = 0
-    try:
-        for item in video_items:
-            is_new = upsert_channel_video(
-                session,
-                channel_id=channel_id,
-                video_id=item.video_id,
-                title=item.title,
-                url=item.url,
-                published_at=item.published_at,
-                duration_seconds=item.duration_seconds,
-            )
-            if is_new:
-                new_count += 1
-            else:
-                upsert_count += 1
-        refresh_channel_timestamp(session, channel_id)
-        session.commit()
-    except Exception as e:
-        session.rollback()
-        session.close()
-        return RedirectResponse(
-            url=f"/sources/channels/{channel_id}/videos?msg=error:写入失败 — {e}",
-            status_code=303,
-        )
+        channel_url = channel["url"]
+        channel_name = channel["name"] or channel["youtube_channel_id"]
     finally:
         session.close()
 
-    return RedirectResponse(
-        url=f"/sources/channels/{channel_id}/videos?msg=success:同步完成，新增 {new_count} 个视频，更新 {upsert_count} 个",
-        status_code=303,
+    job = create_channel_refresh_job(
+        channel_url=channel_url,
+        channel_name=channel_name,
+        channel_id=channel_id,
     )
+    start_channel_refresh_job(job)
+
+    return RedirectResponse(url=f"/tasks/{job.job_id}", status_code=303)
 
 
 @router.post("/sources/channels/{channel_id}/videos/{video_id}/skip")
@@ -1384,19 +1392,18 @@ def action_import_video(
 
         # Get channel defaults
         channel = get_channel(session, channel_id)
-        if not focus and channel:
-            focus = channel.get("default_focus", "")
-        if depth == "standard" and channel:
-            depth = channel.get("default_depth", "standard")
-
-        # Mark as processing before creating job
-        update_channel_video_status(session, cv["id"], "processing")
-        session.commit()
+        if channel:
+            if not focus:
+                focus = channel.get("default_focus", "")
+            if depth == "standard":
+                depth = channel.get("default_depth", "standard")
+        session.commit()  # ensure any pending writes are flushed
     finally:
         session.close()
 
     focus_areas = [f.strip() for f in focus.split(",") if f.strip()] if focus else ["通用投资研究"]
 
+    # Create job first — if this fails, no state is affected
     job = create_job(
         youtube_url=video_url,
         focus_areas=focus_areas,
@@ -1406,7 +1413,12 @@ def action_import_video(
         title=video_title,
     )
 
-    # Update channel_video with job tracking
+    # Tag job with source context for status writeback
+    job.source_type = "channel_video"
+    job.source_channel_id = channel_id
+    job.video_id = video_id
+
+    # Now mark channel_video as processing (job creation succeeded)
     session2 = _get_session()
     try:
         cv2 = get_channel_video_by_video_id(session2, video_id)

@@ -56,6 +56,10 @@
                 <a href="{{ j.result_links.report }}" style="font-size:0.78rem;margin-left:4px">查看报告</a>
                 {% elif j.status == "success" and j.job_type == "sync" and j.result_links.get("brief") %}
                 <a href="{{ j.result_links.brief }}" style="font-size:0.78rem;margin-left:4px">研究摘要</a>
+                {% elif j.status == "success" and j.job_type == "full_flow" and j.result_links.get("report") %}
+                <a href="{{ j.result_links.report }}" style="font-size:0.78rem;margin-left:4px">查看报告</a>
+                {% elif j.status == "success" and j.job_type == "channel_refresh" and j.result_links.get("videos") %}
+                <a href="{{ j.result_links.videos }}" style="font-size:0.78rem;margin-left:4px">查看视频</a>
                 {% endif %}
             </td>
         </tr>

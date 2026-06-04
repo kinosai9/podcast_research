@@ -587,6 +587,16 @@ def get_channel(session: Session, channel_id: int) -> dict | None:
     }
 
 
+def delete_channel(session: Session, channel_id: int) -> bool:
+    """Soft-delete a channel by setting is_active=False. Returns True if deleted."""
+    ch = session.query(Channel).filter_by(id=channel_id).first()
+    if not ch:
+        return False
+    ch.is_active = False
+    session.flush()
+    return True
+
+
 def upsert_channel_video(
     session: Session,
     channel_id: int,
@@ -717,7 +727,7 @@ def detect_video_import_status(
         3. Obsidian 01_Reports/ frontmatter.video_id → "synced"
         4. Default → "new"
 
-    Returns one of: "new", "analyzed", "synced", "skipped", "failed"
+    Returns one of: "new", "processing", "analyzed", "synced", "skipped", "failed"
     """
     # 1. Check channel_videos for stored status
     cv = session.query(ChannelVideo).filter_by(video_id=video_id).first()

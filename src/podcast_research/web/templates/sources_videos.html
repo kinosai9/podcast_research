@@ -62,6 +62,8 @@
                     <input type="hidden" name="flow_mode" value="full">
                     <button type="submit" class="btn-action btn-sm">整理进知识库</button>
                 </form>
+                {% elif v.import_status == 'processing' %}
+                <span class="text-muted">整理中</span>
                 {% elif v.import_status == 'analyzed' %}
                 <form method="post" action="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/import" style="display:inline">
                     <input type="hidden" name="focus" value="{{ channel.default_focus }}">
@@ -79,7 +81,7 @@
                 <span class="text-muted">{{ stage_labels.get(v.import_status, v.import_status) }}</span>
                 {% endif %}
 
-                {% if v.import_status != 'skipped' %}
+                {% if v.import_status != 'skipped' and v.import_status != 'processing' %}
                 <form method="post" action="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/skip" style="display:inline;margin-left:4px">
                     <button type="submit" class="btn-action btn-sm btn-secondary" style="font-size:0.7rem">跳过</button>
                 </form>
