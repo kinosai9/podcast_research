@@ -157,5 +157,5 @@ def analyze_youtube_url(
         return AnalyzeResult(
             success=False,
             error_type="unknown",
-            message="整理失败，请稍后重试。若持续失败可查看日志排查。",
+            message=f"整理失败：{str(e)[:200]}",
         )
