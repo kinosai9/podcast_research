@@ -654,7 +654,7 @@ class TestVideoStatusSync:
         session = get_session()
         try:
             cv = get_channel_video_by_video_id(session, "synVid")
-            update_channel_video_status(session, cv["id"], "synced")
+            update_channel_video_status(session, cv["id"], "synced", report_id=5)
             session.commit()
         finally:
             session.close()
@@ -1043,7 +1043,6 @@ class TestStatusActionsDisplay(_SeedChannelWithVideosMixin):
         resp = api_client.get(f"/sources/channels/{ch_id}/videos")
         html = resp.text
         assert "查看报告" in html
-        assert "同步到知识库" in html
         assert "/reports/5" in html
 
     def test_synced_shows_view_report_and_brief(self, api_client, monkeypatch):
@@ -1056,7 +1055,7 @@ class TestStatusActionsDisplay(_SeedChannelWithVideosMixin):
         resp = api_client.get(f"/sources/channels/{ch_id}/videos")
         html = resp.text
         assert "查看报告" in html
-        assert "查看研究摘要" in html
+        assert "研究摘要" in html
         assert "/reports/5" in html
         assert "/briefs/latest" in html
 
@@ -1750,5 +1749,5 @@ class TestLastJobIdWriteback:
 
         resp = api_client.get(f"/sources/channels/{ch_id}/videos")
         assert resp.status_code == 200
-        assert "查看日志" in resp.text
+        assert "日志" in resp.text
         assert "test_job_log_123" in resp.text

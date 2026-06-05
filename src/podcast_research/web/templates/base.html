@@ -18,7 +18,8 @@
                 <a href="/dashboard"{% if current == '/dashboard' %} class="active"{% endif %}>控制台</a>
                 <a href="/reports"{% if current.startswith('/reports') %} class="active"{% endif %}>报告库</a>
                 <a href="/search"{% if current == '/search' %} class="active"{% endif %}>搜索</a>
-                <a href="/docs">API Docs</a>
+                <a href="/sources/channels"{% if current.startswith('/sources') %} class="active"{% endif %}>信息源</a>
+                <a href="/docs">API</a>
             </nav>
         </div>
     </header>
