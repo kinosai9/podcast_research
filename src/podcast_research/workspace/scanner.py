@@ -12,6 +12,31 @@ from pathlib import Path
 
 from podcast_research.claim_signal.review import _parse_frontmatter
 from podcast_research.llm_wiki.context_builder import HIGH_VALUE_COMPANIES
+
+# ── P2-N.1: Entity hygiene guards ────────────────────────────────────
+
+# Names that look like companies but are actually topics/concepts
+# (lowercased for case-insensitive matching)
+_NOT_A_COMPANY: set[str] = {
+    "agent", "agents", "ai agent", "ai agents",
+    "model", "models", "ai models",
+    "enterprise", "market", "capital market",
+    "infrastructure", "ai infrastructure",
+    "application", "applications",
+    "developer tools", "open source",
+    "security", "safety",
+}
+
+# Names that are definitely companies, not topics
+# (lowercased for case-insensitive matching)
+_NOT_A_TOPIC: set[str] = {
+    "anthropic", "openai", "nvidia", "microsoft", "meta", "google",
+    "alphabet", "tsmc", "amd", "intel", "broadcom", "apple",
+    "amazon", "tesla", "spacex", "oracle", "salesforce",
+    "coreweave", "perplexity", "mistral", "deepseek",
+    "blackrock", "vanguard", "vercel", "shopify", "github",
+    "cloudflare", "stripe", "palantir",
+}
 from podcast_research.utils.file_io import read_text_safe
 
 logger = logging.getLogger(__name__)
@@ -168,7 +193,9 @@ class WorkspaceSnapshot:
     # ── Topic helpers ──
 
     def core_topics(self) -> list[TopicInfo]:
-        return [t for t in self.topics if t.status == "core"]
+        return [t for t in self.topics
+                if t.status == "core"
+                and t.name.lower() not in _NOT_A_TOPIC]
 
     def long_tail_topics(self) -> list[TopicInfo]:
         return [t for t in self.topics if t.status not in ("core", "")]
@@ -179,9 +206,14 @@ class WorkspaceSnapshot:
     # ── Company helpers ──
 
     def core_companies(self) -> list[CompanyInfo]:
-        """Companies that are high-value OR have >= 2 source reports."""
+        """Companies that are high-value OR have >= 2 source reports.
+
+        P2-N.1: Excludes names in _NOT_A_COMPANY (concepts misclassified as companies).
+        """
         result = []
         for c in self.companies:
+            if c.name.lower() in _NOT_A_COMPANY:
+                continue  # Skip: this is a concept, not a company
             if c.name in HIGH_VALUE_COMPANIES:
                 result.append(c)
             elif len(c.source_reports) >= 2:

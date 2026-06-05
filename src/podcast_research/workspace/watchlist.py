@@ -425,7 +425,16 @@ def _build_item_summary(item: WatchlistItemBrief) -> str:
 # ── Markdown / Obsidian output ────────────────────────────────────
 
 def render_watchlist_markdown(brief: list[WatchlistItemBrief]) -> str:
-    """Render watchlist brief as markdown for Obsidian."""
+    """Render watchlist brief as markdown for Obsidian.
+
+    P2-N.2: Structured per-item output with sections:
+        - 本轮新增 (new evidence)
+        - 已被多报告强化 (reinforced by multiple reports)
+        - 需要继续观察 (open observations)
+        - 暂无新证据 (no new evidence)
+    """
+    from podcast_research.utils.display import clean_display_text
+
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     lines = [f"# Watchlist Brief", f"", f"*Generated: {now}*", ""]
 
@@ -441,26 +450,48 @@ def render_watchlist_markdown(brief: list[WatchlistItemBrief]) -> str:
         for item in items:
             status_icon = {"direct": "🟢", "indirect": "🟡", "no_new_evidence": "⚪"}.get(item.status, "⚪")
             lines.append(f"### {status_icon} {item.name}")
-            lines.append(f"")
+            lines.append("")
+
+            # Summary line
             lines.append(item.summary)
             lines.append("")
-            if item.direct_items:
-                lines.append("**直接相关:**")
+
+            # ── P2-N.2: Structured sections ──
+
+            # 本轮新增 (direct items = new evidence this round)
+            if item.direct_count > 0:
+                lines.append("**本轮新增：**")
                 for d in item.direct_items[:3]:
-                    lines.append(f"- {d}")
-                lines.append("")
-            if item.indirect_items:
-                lines.append("**间接相关:**")
-                for d in item.indirect_items[:3]:
-                    lines.append(f"- {d}")
-                lines.append("")
-            if item.observations:
-                lines.append("**待继续观察:**")
-                for o in item.observations[:3]:
-                    lines.append(f"- {o}")
+                    lines.append(f"- {clean_display_text(d, 100)}")
                 lines.append("")
 
-    # No new evidence section
+            # 已被多报告强化 (reinforced claims)
+            if item.reinforced_count > 0:
+                lines.append("**已被多报告强化：**")
+                for r in item.reinforced[:2]:
+                    lines.append(f"- {clean_display_text(r, 100)}")
+                lines.append("")
+
+            # 需要继续观察 (open observations / watching signals)
+            if item.observation_count > 0:
+                lines.append("**需要继续观察：**")
+                for o in item.observations[:3]:
+                    lines.append(f"- {clean_display_text(o, 100)}")
+                lines.append("")
+
+            # 暂无新证据
+            if item.status == "no_new_evidence" and item.card_exists:
+                lines.append("*本轮暂无新证据，当前判断主要依赖既有报告。*")
+                lines.append("")
+
+            # Indirect connections (if any, as supplementary)
+            if item.indirect_items and item.status != "no_new_evidence":
+                lines.append("*间接关联：*")
+                for d in item.indirect_items[:2]:
+                    lines.append(f"- {clean_display_text(d, 100)}")
+                lines.append("")
+
+    # No new evidence section — consolidated
     no_evidence = [b for b in brief if b.status == "no_new_evidence" and b.card_exists]
     if no_evidence:
         lines.append("## 暂无新证据")

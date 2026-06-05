@@ -7,6 +7,7 @@ No file I/O, no LLM calls, no external APIs.
 from __future__ import annotations
 
 from podcast_research.workspace.scanner import WorkspaceSnapshot
+from podcast_research.utils.display import clean_display_text
 
 # Managed block names
 BLOCK_HOME = "home-dashboard"
@@ -206,7 +207,7 @@ def generate_knowledge_map(snapshot: WorkspaceSnapshot) -> str:
     ])
     if active:
         for c in sorted(active, key=lambda x: x.status):
-            lines.append(f"- [[06_Claims/{c.card_id}|{c.claim[:60]}...]] `{c.status}`")
+            lines.append(f"- [[06_Claims/{c.card_id}|{clean_display_text(c.claim, 60)}...]] `{c.status}`")
     else:
         lines.append("*No active claims.*")
     lines.append("")
@@ -219,7 +220,7 @@ def generate_knowledge_map(snapshot: WorkspaceSnapshot) -> str:
     ])
     if watching:
         for s in sorted(watching, key=lambda x: x.status):
-            lines.append(f"- [[07_Signals/{s.card_id}|{s.signal[:60]}...]] `{s.status}`")
+            lines.append(f"- [[07_Signals/{s.card_id}|{clean_display_text(s.signal, 60)}...]] `{s.status}`")
     else:
         lines.append("*No watching signals.*")
     lines.append("")
@@ -290,7 +291,7 @@ def generate_review_queue(snapshot: WorkspaceSnapshot) -> str:
         lines.append("| Claim | Status |")
         lines.append("|-------|--------|")
         for c in top_claims:
-            lines.append(f"| [[06_Claims/{c.card_id}|{c.claim[:50]}...]] | `{c.status}` |")
+            lines.append(f"| [[06_Claims/{c.card_id}|{clean_display_text(c.claim, 50)}...]] | `{c.status}` |")
         if total_claims > MAX_CLAIMS_IN_REVIEW_QUEUE:
             lines.append("")
             lines.append(
@@ -313,7 +314,7 @@ def generate_review_queue(snapshot: WorkspaceSnapshot) -> str:
         lines.append("| Signal | Status |")
         lines.append("|--------|--------|")
         for s in top_signals:
-            lines.append(f"| [[07_Signals/{s.card_id}|{s.signal[:50]}...]] | `{s.status}` |")
+            lines.append(f"| [[07_Signals/{s.card_id}|{clean_display_text(s.signal, 50)}...]] | `{s.status}` |")
         if total_signals > MAX_SIGNALS_IN_REVIEW_QUEUE:
             lines.append("")
             lines.append(
@@ -333,7 +334,7 @@ def generate_review_queue(snapshot: WorkspaceSnapshot) -> str:
     if tracking:
         for s in tracking:
             lines.append(
-                f"- [[07_Signals/{s.card_id}|{s.signal[:60]}...]] "
+                f"- [[07_Signals/{s.card_id}|{clean_display_text(s.signal, 60)}...]] "
                 f"`tracking: {s.tracking_status}`"
             )
     else:

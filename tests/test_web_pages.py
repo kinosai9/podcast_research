@@ -2128,4 +2128,166 @@ class TestVaultSetup:
         assert resp.status_code == 200
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# P2-N.1: Display & Entity Hygiene Tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCleanDisplayText:
+    """P2-N.1: clean_display_text() utility."""
+
+    def test_strips_markdown_bold(self):
+        """**bold** → bold."""
+        from podcast_research.utils.display import clean_display_text
+        assert clean_display_text("This is **bold** text") == "This is bold text"
+
+    def test_strips_backticks(self):
+        """`code` → code."""
+        from podcast_research.utils.display import clean_display_text
+        assert clean_display_text("Use `get_session()` to connect") == "Use get_session() to connect"
+
+    def test_strips_hashtag(self):
+        """#tag → tag."""
+        from podcast_research.utils.display import clean_display_text
+        result = clean_display_text("Check out #AI #Agents")
+        assert "#AI" not in result
+
+    def test_truncates_long_text(self):
+        """Text over max_len gets truncated with ..."""
+        from podcast_research.utils.display import clean_display_text
+        long_text = "A" * 300
+        result = clean_display_text(long_text, max_len=100)
+        assert len(result) <= 103  # max_len + "..."
+        assert result.endswith("...")
+
+    def test_preserves_technical_terms(self):
+        """Technical terms like API, GPU are preserved."""
+        from podcast_research.utils.display import clean_display_text
+        result = clean_display_text("GPU demand surges for AI API inference")
+        assert "GPU" in result
+        assert "API" in result
+
+
+class TestEntityHygiene:
+    """P2-N.1: Entity classification guards prevent misclassification."""
+
+    def test_agent_not_in_core_companies(self):
+        """Agent should not appear as a core company."""
+        from podcast_research.workspace.scanner import _NOT_A_COMPANY
+        assert "agent" in _NOT_A_COMPANY
+        assert "ai agent" in _NOT_A_COMPANY
+
+    def test_anthropic_not_in_core_topics(self):
+        """Anthropic should not appear as a core topic."""
+        from podcast_research.workspace.scanner import _NOT_A_TOPIC
+        assert "anthropic" in _NOT_A_TOPIC
+        assert "openai" in _NOT_A_TOPIC
+
+    def test_model_maps_to_ai_models(self):
+        """'model' maps to 'AI Models' canonical."""
+        from podcast_research.llm_wiki.taxonomy import normalize_topic_name
+        result = normalize_topic_name("model")
+        assert result == "AI Models"
+
+    def test_enterprise_maps_to_enterprise_ai(self):
+        """'enterprise' → 'Enterprise AI'."""
+        from podcast_research.llm_wiki.taxonomy import normalize_topic_name
+        result = normalize_topic_name("enterprise")
+        assert result == "Enterprise AI"
+
+    def test_market_maps_to_public_markets(self):
+        """'market' → 'Public Markets'."""
+        from podcast_research.llm_wiki.taxonomy import normalize_topic_name
+        result = normalize_topic_name("market")
+        assert result == "Public Markets"
+
+
+class TestExplanatoryResearchBrief:
+    """P2-N.2: Research Brief is explanatory, not just statistical."""
+
+    def test_summary_contains_context_not_just_counts(self, tmp_path):
+        """Summary bullet should contain topic context, not just numbers."""
+        from podcast_research.workspace.research_brief import ResearchBrief, TopicInsight, _build_summary
+        from podcast_research.workspace.scanner import WorkspaceSnapshot
+
+        snapshot = WorkspaceSnapshot(vault_path=tmp_path)
+        brief = ResearchBrief(generated_at="2026-01-01")
+        brief.active_topics = [
+            TopicInsight(name="AI Agents", score=15.0, reports=3, claims=5, signals=2),
+        ]
+        brief.active_companies = [
+            TopicInsight(name="OpenAI", score=10.0, reports=2, claims=4, signals=1),
+        ]
+        brief.total_claims = 10
+        brief.total_reports = 5
+        brief.reinforced_claims = ["Claim A: Agents are key", "Claim B: Enterprise adoption rising"]
+        brief.recommended_reports = [{"title": "Test", "filename": "f.md", "channel": "Ch"}]
+
+        bullets = _build_summary(brief, snapshot)
+        # Should contain context, not just "关联 X 条判断"
+        combined = " ".join(bullets)
+        assert "AI Agents" in combined
+        # Should NOT just say "关联 N 条判断"
+        assert "讨论集中" in combined or "主要涉及" in combined or "涵盖" in combined
+
+    def test_brief_uses_clean_display_text(self, tmp_path):
+        """Brief summary bullets should not contain markdown artifacts."""
+        from podcast_research.workspace.research_brief import ResearchBrief, TopicInsight, _build_summary
+        from podcast_research.workspace.scanner import WorkspaceSnapshot
+
+        snapshot = WorkspaceSnapshot(vault_path=tmp_path)
+        brief = ResearchBrief(generated_at="2026-01-01")
+        brief.active_topics = [
+            TopicInsight(name="AI Agents", score=10.0, reports=2, claims=3, signals=1),
+        ]
+        brief.active_companies = []
+        brief.total_claims = 5
+        brief.total_reports = 3
+        brief.reinforced_claims = []
+        brief.recommended_reports = []
+
+        bullets = _build_summary(brief, snapshot)
+        combined = " ".join(bullets)
+        assert "**" not in combined  # No markdown bold in output
+
+
+class TestWatchlistBriefSections:
+    """P2-N.2: Watchlist Brief has structured sections."""
+
+    def test_direct_items_labeled_as_new_evidence(self):
+        """Direct items show '本轮新增' label."""
+        from podcast_research.workspace.watchlist import WatchlistItemBrief, render_watchlist_markdown
+
+        item = WatchlistItemBrief(
+            name="OpenAI", item_type="company",
+            status="direct", direct_count=3,
+            direct_items=["New evidence 1", "New evidence 2"],
+        )
+        md = render_watchlist_markdown([item])
+        assert "本轮新增" in md
+
+    def test_observations_labeled(self):
+        """Observations show '需要继续观察' label."""
+        from podcast_research.workspace.watchlist import WatchlistItemBrief, render_watchlist_markdown
+
+        item = WatchlistItemBrief(
+            name="NVIDIA", item_type="company",
+            status="direct", direct_count=1,
+            observation_count=2,
+            observations=["Risk: export control", "Risk: competition"],
+        )
+        md = render_watchlist_markdown([item])
+        assert "需要继续观察" in md
+
+    def test_no_new_evidence_shows_notice(self):
+        """no_new_evidence items show notice text."""
+        from podcast_research.workspace.watchlist import WatchlistItemBrief, render_watchlist_markdown
+
+        item = WatchlistItemBrief(
+            name="TSMC", item_type="company",
+            status="no_new_evidence", card_exists=True,
+            summary="No updates.",
+        )
+        md = render_watchlist_markdown([item])
+        assert "暂无新证据" in md
 

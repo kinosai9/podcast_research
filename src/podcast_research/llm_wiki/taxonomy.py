@@ -35,6 +35,7 @@ TOPIC_CANONICAL_MAP: dict[str, str] = {
     "agent infrastructure": "AI Agents",
     "coding agents": "AI Agents",
     "agentic infrastructure": "AI Agents",
+    "agent": "AI Agents",  # P2-N.1: lone "Agent" → AI Agents
     # AI Infrastructure
     "ai infra": "AI Infrastructure",
     "ai infrastructure": "AI Infrastructure",
@@ -42,6 +43,7 @@ TOPIC_CANONICAL_MAP: dict[str, str] = {
     "compute infrastructure": "AI Infrastructure",
     "gpu cluster": "AI Infrastructure",
     "training infrastructure": "AI Infrastructure",
+    "infrastructure": "AI Infrastructure",  # P2-N.1
     # AI Capex
     "ai capex": "AI Capex",
     "cloud capex": "AI Capex",
@@ -53,6 +55,7 @@ TOPIC_CANONICAL_MAP: dict[str, str] = {
     "enterprise ai adoption": "Enterprise AI",
     "enterprise deployment": "Enterprise AI",
     "b2b ai": "Enterprise AI",
+    "enterprise": "Enterprise AI",  # P2-N.1
     # AI Models
     "llm": "AI Models",
     "language model": "AI Models",
@@ -60,6 +63,7 @@ TOPIC_CANONICAL_MAP: dict[str, str] = {
     "model training": "AI Models",
     "model architecture": "AI Models",
     "reasoning model": "AI Models",
+    "model": "AI Models",  # P2-N.1
     # Open Source AI
     "open models": "Open Source AI",
     "open source models": "Open Source AI",
@@ -141,6 +145,8 @@ TOPIC_CANONICAL_MAP: dict[str, str] = {
     "data centres": "Data Center",
     # Public Markets
     "public market": "Public Markets",
+    "market": "Public Markets",  # P2-N.1
+    "capital market": "Public Markets",  # P2-N.1
     "tech stock": "Public Markets",
     "index fund": "Public Markets",
     "passive": "Public Markets",
