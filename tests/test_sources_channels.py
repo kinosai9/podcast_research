@@ -960,8 +960,8 @@ class TestImportGuard(_SeedChannelWithVideosMixin):
         assert resp.status_code == 303
         assert "/tasks/" not in resp.headers["location"]
 
-    def test_import_guard_analyzed_rejected(self, api_client, monkeypatch):
-        """Analyzed video should NOT create a new job."""
+    def test_import_guard_analyzed_creates_sync(self, api_client, monkeypatch):
+        """Analyzed + report_id → sync retry job (P2-M.3.1: sync may have failed)."""
         ch_id, video_id = self._seed_channel_with_video(
             api_client, monkeypatch, status="analyzed", video_id="guardAnal1",
             report_id=5,
@@ -973,7 +973,8 @@ class TestImportGuard(_SeedChannelWithVideosMixin):
             follow_redirects=False,
         )
         assert resp.status_code == 303
-        assert "/tasks/" not in resp.headers["location"]
+        location = resp.headers["location"]
+        assert "/tasks/" in location  # Creates sync retry job
 
     def test_import_failed_with_report_creates_sync(self, api_client, monkeypatch):
         """Failed + report_id should create a sync retry job."""
@@ -1317,3 +1318,437 @@ class TestRerunRoutes:
         )
         assert resp.status_code == 303
         assert "/tasks/" in resp.headers["location"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# P2-M.4: Channel Filters & Watchlist Match Tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestVideoListFilters:
+    """Test status/long/watchlist filter query params on video list page."""
+
+    def test_filter_status_new(self, api_client, monkeypatch):
+        """status=new only shows new videos."""
+        ch_id = _seed_channel_with_status_mix(api_client, monkeypatch)
+
+        resp = api_client.get(f"/sources/channels/{ch_id}/videos?status=new")
+        assert resp.status_code == 200
+        html = resp.text
+        assert "newVideo1" in html
+        assert "syncVideo1" not in html
+
+    def test_filter_status_synced(self, api_client, monkeypatch):
+        """status=synced only shows synced videos."""
+        ch_id = _seed_channel_with_status_mix(api_client, monkeypatch)
+
+        resp = api_client.get(f"/sources/channels/{ch_id}/videos?status=synced")
+        assert resp.status_code == 200
+        html = resp.text
+        assert "syncVideo1" in html
+        assert "newVideo1" not in html
+
+    def test_filter_status_failed(self, api_client, monkeypatch):
+        """status=failed shows failed videos."""
+        ch_id = _seed_channel_with_status_mix(api_client, monkeypatch)
+
+        resp = api_client.get(f"/sources/channels/{ch_id}/videos?status=failed")
+        assert resp.status_code == 200
+        html = resp.text
+        assert "failVideo1" in html
+        assert "newVideo1" not in html
+
+    def test_filter_long_videos(self, api_client, monkeypatch):
+        """long=1 shows only videos > 90 min."""
+        ch_id = _seed_channel_with_status_mix(api_client, monkeypatch)
+
+        resp = api_client.get(f"/sources/channels/{ch_id}/videos?long=1")
+        assert resp.status_code == 200
+        html = resp.text
+        assert "longVid1" in html
+        assert "newVideo1" not in html
+
+    def test_combined_filters(self, api_client, monkeypatch):
+        """Combined status + watchlist filters work."""
+        ch_id = _seed_channel_with_status_mix(api_client, monkeypatch)
+
+        resp = api_client.get(
+            f"/sources/channels/{ch_id}/videos?status=new&watchlist_match=1"
+        )
+        assert resp.status_code == 200
+
+    def test_all_filter_shows_everything(self, api_client, monkeypatch):
+        """No filter shows all videos."""
+        ch_id = _seed_channel_with_status_mix(api_client, monkeypatch)
+
+        resp = api_client.get(f"/sources/channels/{ch_id}/videos")
+        assert resp.status_code == 200
+        html = resp.text
+        assert "newVideo1" in html
+        assert "syncVideo1" in html
+        assert "failVideo1" in html
+
+
+class TestWatchlistMatch:
+    """Test match_video_to_watchlist function."""
+
+    def test_match_company_exact(self):
+        """Exact company name match."""
+        from podcast_research.services.watchlist_matcher import match_video_to_watchlist
+        from podcast_research.workspace.watchlist import WatchlistConfig
+
+        wl = WatchlistConfig(companies=["OpenAI", "NVIDIA"])
+
+        result = match_video_to_watchlist("OpenAI CFO Sarah Friar on IPO", wl)
+        assert result.matched is True
+        assert result.matched_type == "company"
+        assert "OpenAI" in result.matched_terms
+
+    def test_match_company_case_insensitive(self):
+        """Company name match is case insensitive."""
+        from podcast_research.services.watchlist_matcher import match_video_to_watchlist
+        from podcast_research.workspace.watchlist import WatchlistConfig
+
+        wl = WatchlistConfig(companies=["NVIDIA"])
+
+        result = match_video_to_watchlist(
+            "nvidia GTC keynote Jensen Huang", wl
+        )
+        assert result.matched is True
+        assert result.matched_type == "company"
+
+    def test_match_company_alias(self):
+        """Company alias map works."""
+        from podcast_research.services.watchlist_matcher import match_video_to_watchlist
+        from podcast_research.workspace.watchlist import WatchlistConfig
+
+        wl = WatchlistConfig(companies=["NVIDIA"])
+
+        # "英伟达" is an alias for NVIDIA
+        result = match_video_to_watchlist("英伟达发布新GPU架构", wl)
+        assert result.matched is True
+        assert result.matched_type == "company"
+
+    def test_match_topic_exact(self):
+        """Exact topic name match."""
+        from podcast_research.services.watchlist_matcher import match_video_to_watchlist
+        from podcast_research.workspace.watchlist import WatchlistConfig
+
+        wl = WatchlistConfig(topics=["AI Agents"])
+
+        result = match_video_to_watchlist(
+            "The Future of AI Agents in Enterprise", wl
+        )
+        assert result.matched is True
+        assert result.matched_type == "topic"
+        assert "AI Agents" in result.matched_terms
+
+    def test_match_topic_normalized(self):
+        """Normalized topic match (no spaces)."""
+        from podcast_research.services.watchlist_matcher import match_video_to_watchlist
+        from podcast_research.workspace.watchlist import WatchlistConfig
+
+        wl = WatchlistConfig(topics=["AI Agents"])
+
+        result = match_video_to_watchlist("AIAgents in Production", wl)
+        assert result.matched is True
+        assert result.matched_type == "topic"
+
+    def test_match_theme_via_related_topic(self):
+        """Theme matches via related topics."""
+        from podcast_research.services.watchlist_matcher import match_video_to_watchlist
+        from podcast_research.workspace.watchlist import WatchlistConfig
+
+        wl = WatchlistConfig(themes=["Agent 工具链"])
+
+        # Agent 工具链 → related topics include "AI Agents", "Developer Tools"
+        result = match_video_to_watchlist(
+            "Building AI Agents with MCP", wl
+        )
+        assert result.matched is True
+        assert result.matched_type == "theme"
+
+    def test_no_match(self):
+        """No match returns False."""
+        from podcast_research.services.watchlist_matcher import match_video_to_watchlist
+        from podcast_research.workspace.watchlist import WatchlistConfig
+
+        wl = WatchlistConfig(companies=["OpenAI"], topics=["AI Agents"])
+
+        result = match_video_to_watchlist(
+            "Cooking with Gordon Ramsay", wl
+        )
+        assert result.matched is False
+
+    def test_company_before_topic(self):
+        """Company match takes priority over topic."""
+        from podcast_research.services.watchlist_matcher import match_video_to_watchlist
+        from podcast_research.workspace.watchlist import WatchlistConfig
+
+        wl = WatchlistConfig(companies=["NVIDIA"], topics=["Chips"])
+
+        # Title mentions both but company should win
+        result = match_video_to_watchlist("NVIDIA Shows Next-Gen Chips", wl)
+        assert result.matched is True
+        assert result.matched_type == "company"
+
+
+class TestRecommendationBadges:
+    """Test compute_recommendation badge logic."""
+
+    def test_new_plus_watchlist_gets_recommended(self):
+        """new + watchlist_match → 'recommended' badge."""
+        from podcast_research.services.watchlist_matcher import (
+            compute_recommendation, MatchResult,
+        )
+        match = MatchResult(matched=True, matched_terms=["OpenAI"],
+                           matched_type="company", reason="test")
+        badges = compute_recommendation("new", match, duration_seconds=1800)
+        assert "recommended" in badges
+
+    def test_synced_no_recommended_badge(self):
+        """synced videos don't get recommended badge even if watchlist matches."""
+        from podcast_research.services.watchlist_matcher import (
+            compute_recommendation, MatchResult,
+        )
+        match = MatchResult(matched=True, matched_terms=["OpenAI"],
+                           matched_type="company", reason="test")
+        badges = compute_recommendation("synced", match, duration_seconds=1800)
+        assert "recommended" not in badges
+
+    def test_long_video_badge(self):
+        """Videos > 90 min get long_video badge."""
+        from podcast_research.services.watchlist_matcher import compute_recommendation
+        badges = compute_recommendation("new", None, duration_seconds=7200)
+        assert "long_video" in badges
+
+    def test_short_video_no_long_badge(self):
+        """Videos ≤ 90 min don't get long_video badge."""
+        from podcast_research.services.watchlist_matcher import compute_recommendation
+        badges = compute_recommendation("new", None, duration_seconds=1800)
+        assert "long_video" not in badges
+
+    def test_both_badges(self):
+        """new + watchlist + long → both badges."""
+        from podcast_research.services.watchlist_matcher import (
+            compute_recommendation, MatchResult,
+        )
+        match = MatchResult(matched=True, matched_terms=["OpenAI"],
+                           matched_type="company", reason="test")
+        badges = compute_recommendation("new", match, duration_seconds=7200)
+        assert "recommended" in badges
+        assert "long_video" in badges
+
+
+class TestChannelDefaultFocusEdit:
+    """Test editing channel default_focus and using it for import."""
+
+    def test_edit_default_focus(self, api_client, monkeypatch):
+        """Can save channel default_focus via edit POST."""
+        ch_id = _seed_channel(api_client, name="Test", default_focus="Old Focus")
+
+        resp = api_client.post(
+            f"/sources/channels/{ch_id}/edit",
+            data={
+                "name": "Test Channel",
+                "priority": "core",
+                "default_focus": "AI Investing, Tech Stocks",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "success" in resp.headers.get("location", "")
+
+        # Verify in DB
+        from podcast_research.db.session import get_session
+        from podcast_research.db.models import Channel
+        session = get_session()
+        try:
+            ch = session.query(Channel).filter_by(id=ch_id).first()
+            assert ch.default_focus == "AI Investing, Tech Stocks"
+        finally:
+            session.close()
+
+    def test_import_page_shows_default_focus(self, api_client, monkeypatch):
+        """Video list page shows import button with channel default_focus."""
+        ch_id = _seed_channel(api_client, name="Test", default_focus="Semiconductor")
+        mock_adapter = MockChannelAdapter([
+            {"video_id": "showFoc1", "title": "New Video",
+             "url": "https://www.youtube.com/watch?v=showFoc1",
+             "published_at": "20260601", "duration_seconds": 1800},
+        ])
+        monkeypatch.setattr(
+            "podcast_research.adapters.channel_video_adapter.ChannelVideoAdapter",
+            lambda: mock_adapter,
+        )
+        api_client.post(f"/sources/channels/{ch_id}/refresh", follow_redirects=False)
+        import time; time.sleep(0.3)
+
+        resp = api_client.get(f"/sources/channels/{ch_id}/videos")
+        assert resp.status_code == 200
+        html = resp.text
+        # The import form should contain the channel default_focus
+        assert 'Semiconductor' in html
+
+
+# ── Helpers for P2-M.4 tests ────────────────────────────────────────────
+
+
+def _seed_channel_with_status_mix(api_client, monkeypatch):
+    """Seed a channel with videos of various statuses for filter testing."""
+    ch_id = _seed_channel(api_client, name="TestMix", default_focus="AI")
+
+    mock_adapter = MockChannelAdapter([
+        {"video_id": "newVideo1", "title": "Fresh AI Content",
+         "url": "https://youtube.com/watch?v=newVideo1",
+         "published_at": "20260605", "duration_seconds": 1800},
+        {"video_id": "newVideo2", "title": "Another New One",
+         "url": "https://youtube.com/watch?v=newVideo2",
+         "published_at": "20260604", "duration_seconds": 2400},
+        {"video_id": "syncVideo1", "title": "Already Synced",
+         "url": "https://youtube.com/watch?v=syncVideo1",
+         "published_at": "20260603", "duration_seconds": 1800},
+        {"video_id": "failVideo1", "title": "Failed Processing",
+         "url": "https://youtube.com/watch?v=failVideo1",
+         "published_at": "20260602", "duration_seconds": 1800},
+        {"video_id": "failSync1", "title": "Failed Sync",
+         "url": "https://youtube.com/watch?v=failSync1",
+         "published_at": "20260601", "duration_seconds": 1800},
+        {"video_id": "longVid1", "title": "Very Long Deep Dive",
+         "url": "https://youtube.com/watch?v=longVid1",
+         "published_at": "20260530", "duration_seconds": 7200},
+        {"video_id": "skipVideo1", "title": "Skipped Content",
+         "url": "https://youtube.com/watch?v=skipVideo1",
+         "published_at": "20260529", "duration_seconds": 1800},
+    ])
+    monkeypatch.setattr(
+        "podcast_research.adapters.channel_video_adapter.ChannelVideoAdapter",
+        lambda: mock_adapter,
+    )
+    api_client.post(f"/sources/channels/{ch_id}/refresh", follow_redirects=False)
+    import time; time.sleep(0.3)
+
+    # Set specific statuses
+    from podcast_research.db.session import get_session
+    from podcast_research.db.repository import get_channel_video_by_video_id, update_channel_video_status
+    session = get_session()
+    try:
+        cv = get_channel_video_by_video_id(session, "syncVideo1")
+        if cv:
+            update_channel_video_status(session, cv["id"], "synced", report_id=1)
+        cv = get_channel_video_by_video_id(session, "failVideo1")
+        if cv:
+            update_channel_video_status(session, cv["id"], "failed", failure_reason="test error")
+        cv = get_channel_video_by_video_id(session, "failSync1")
+        if cv:
+            update_channel_video_status(session, cv["id"], "failed", report_id=2, failure_reason="sync error")
+        cv = get_channel_video_by_video_id(session, "skipVideo1")
+        if cv:
+            update_channel_video_status(session, cv["id"], "skipped")
+        session.commit()
+    finally:
+        session.close()
+
+    return ch_id
+
+
+def _write_test_watchlist_with_openai():
+    """Write a temporary Watchlist.yaml with OpenAI in the test vault."""
+    from podcast_research import config_store
+    vp_str = config_store.get_user_vault_path()
+    if not vp_str:
+        return
+    vp = Path(vp_str)
+    sys_dir = vp / "99_System"
+    sys_dir.mkdir(parents=True, exist_ok=True)
+    wl_path = sys_dir / "Watchlist.yaml"
+    wl_path.write_text("""companies:
+  - OpenAI
+  - NVIDIA
+
+topics:
+  - AI Agents
+
+themes:
+  - Agent 工具链
+""", encoding="utf-8")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# P2-M.4.1: last_job_id writeback & channel video log link tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestLastJobIdWriteback:
+    """P2-M.4.1: last_job_id persistence and display for failed videos."""
+
+    def test_last_job_id_written_on_import(self, api_client, monkeypatch):
+        """After import creates a job, channel_video has active_job_id for log access."""
+        ch_id = _seed_channel(api_client)
+        mock_adapter = MockChannelAdapter([
+            {"video_id": "ljTest1", "title": "LJ Test Video",
+             "url": "https://youtube.com/watch?v=ljTest1",
+             "published_at": "20260601", "duration_seconds": 1800},
+        ])
+        monkeypatch.setattr(
+            "podcast_research.adapters.channel_video_adapter.ChannelVideoAdapter",
+            lambda: mock_adapter,
+        )
+        api_client.post(f"/sources/channels/{ch_id}/refresh", follow_redirects=False)
+        import time; time.sleep(0.3)
+
+        # Mock start_job to avoid background thread
+        import podcast_research.services.job_service as js
+        monkeypatch.setattr(js, "start_job", lambda job: None)
+
+        resp = api_client.post(
+            f"/sources/channels/{ch_id}/videos/ljTest1/import",
+            data={"focus": "AI", "depth": "standard", "flow_mode": "full"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        # Check channel_video has active_job_id for log linking
+        from podcast_research.db.session import get_session
+        from podcast_research.db.repository import get_channel_video_by_video_id
+        session = get_session()
+        try:
+            cv = get_channel_video_by_video_id(session, "ljTest1")
+            assert cv is not None
+            assert cv.get("active_job_id")  # Set during import for "查看进度"
+        finally:
+            session.close()
+
+    def test_failed_video_shows_view_logs_link(self, api_client, monkeypatch):
+        """Failed channel video with last_job_id shows '查看日志' link."""
+        ch_id = _seed_channel(api_client)
+        mock_adapter = MockChannelAdapter([
+            {"video_id": "failLog1", "title": "Failed With Log Link",
+             "url": "https://youtube.com/watch?v=failLog1",
+             "published_at": "20260601", "duration_seconds": 1800},
+        ])
+        monkeypatch.setattr(
+            "podcast_research.adapters.channel_video_adapter.ChannelVideoAdapter",
+            lambda: mock_adapter,
+        )
+        api_client.post(f"/sources/channels/{ch_id}/refresh", follow_redirects=False)
+        import time; time.sleep(0.3)
+
+        from podcast_research.db.session import get_session
+        from podcast_research.db.repository import get_channel_video_by_video_id
+        from podcast_research.db.models import ChannelVideo
+        session = get_session()
+        try:
+            cv = get_channel_video_by_video_id(session, "failLog1")
+            db_cv = session.query(ChannelVideo).filter_by(id=cv["id"]).first()
+            db_cv.status = "failed"
+            db_cv.last_job_id = "test_job_log_123"
+            db_cv.failure_reason = "test error"
+            session.commit()
+        finally:
+            session.close()
+
+        resp = api_client.get(f"/sources/channels/{ch_id}/videos")
+        assert resp.status_code == 200
+        assert "查看日志" in resp.text
+        assert "test_job_log_123" in resp.text

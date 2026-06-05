@@ -86,12 +86,24 @@ AI 正在获取字幕、拆解观点并生成报告。长视频可能需要几�
             </div>
         </div>
         <div id="job-failed" style="display:none">
-            <div class="alert alert-error" id="job-error-msg"></div>
-            <div style="margin-top:12px">
-                <a href="/tasks" class="btn-action">返回整理任务</a>
-                {% if job.report_id %}
-                <a href="/reports/{{ job.report_id }}" class="btn-action btn-secondary">返回报告</a>
-                {% endif %}
+            <!-- Failure card -->
+            <div class="alert alert-error" style="margin-bottom:16px">
+                <p style="font-weight:700;margin:0 0 4px 0;font-size:0.95rem" id="job-fail-summary"></p>
+                <p style="margin:0;font-size:0.82rem;color:var(--text-soft)" id="job-fail-detail"></p>
+            </div>
+            <!-- Completed steps -->
+            <div id="job-fail-completed" style="margin-bottom:12px">
+                <p style="font-weight:600;font-size:0.85rem;margin:0 0 6px 0;color:var(--success)">已完成</p>
+                <ul id="job-fail-completed-list" style="list-style:none;padding:0;margin:0;font-size:0.82rem;color:var(--text-soft)"></ul>
+            </div>
+            <!-- Pending steps -->
+            <div id="job-fail-pending" style="margin-bottom:16px">
+                <p style="font-weight:600;font-size:0.85rem;margin:0 0 6px 0;color:var(--error)">未完成</p>
+                <ul id="job-fail-pending-list" style="list-style:none;padding:0;margin:0;font-size:0.82rem;color:var(--text-soft)"></ul>
+            </div>
+            <!-- Failure actions -->
+            <div id="job-fail-actions" style="display:flex;gap:8px;flex-wrap:wrap">
+                <a href="/tasks" class="btn-action btn-secondary">返回整理任务</a>
             </div>
         </div>
     </div>
@@ -243,24 +255,81 @@ AI 正在获取字幕、拆解观点并生成报告。长视频可能需要几�
                 }
             }
         } else {
-            // Failed — show error with partial-result links if available
+            // Failed — P2-M.4.1: Rich failure UX
             var failedDiv = document.getElementById("job-failed");
             failedDiv.style.display = "block";
-            document.getElementById("job-error-msg").textContent = data.error || data.message || "任务失败，请稍后重试。";
 
-            // For full_flow where analysis succeeded but sync failed, show report + retry
-            if (jobType === "full_flow" && data.result_links && data.result_links.report) {
-                var failedLinks = failedDiv.querySelector("div");
-                if (failedLinks) {
-                    var links = data.result_links;
-                    if (links.report) {
-                        failedLinks.innerHTML += '<a href="' + links.report + '" class="btn-action" style="margin-top:8px;display:inline-block">查看报告</a>';
-                    }
-                    if (links.sync) {
-                        failedLinks.innerHTML += '<form method="post" action="' + links.sync + '" style="display:inline;margin-top:8px"><button type="submit" class="btn-action">重新同步</button></form>';
-                    }
-                }
+            // Error summary & detail
+            var summary = data.error_summary || data.error || data.message || "任务失败，请稍后重试。";
+            document.getElementById("job-fail-summary").textContent = summary;
+            var detail = data.error_detail || "";
+            document.getElementById("job-fail-detail").textContent = detail;
+
+            // Failed stage
+            if (data.failed_stage) {
+                document.getElementById("job-fail-detail").textContent =
+                    (detail || "失败阶段: " + data.failed_stage);
             }
+
+            // Completed steps
+            var completed = data.completed_steps || [];
+            var completedList = document.getElementById("job-fail-completed-list");
+            completedList.innerHTML = "";
+            if (completed.length > 0) {
+                document.getElementById("job-fail-completed").style.display = "block";
+                for (var i = 0; i < completed.length; i++) {
+                    var li = document.createElement("li");
+                    li.textContent = "✓ " + completed[i];
+                    li.style.cssText = "padding:2px 0;line-height:1.5";
+                    completedList.appendChild(li);
+                }
+            } else {
+                document.getElementById("job-fail-completed").style.display = "none";
+            }
+
+            // Pending steps
+            var pending = data.pending_steps || [];
+            var pendingList = document.getElementById("job-fail-pending-list");
+            pendingList.innerHTML = "";
+            if (pending.length > 0) {
+                document.getElementById("job-fail-pending").style.display = "block";
+                for (var i = 0; i < pending.length; i++) {
+                    var li = document.createElement("li");
+                    li.textContent = "✕ " + pending[i];
+                    li.style.cssText = "padding:2px 0;line-height:1.5";
+                    pendingList.appendChild(li);
+                }
+            } else {
+                document.getElementById("job-fail-pending").style.display = "none";
+            }
+
+            // Action buttons based on failure_kind
+            var actionsDiv = document.getElementById("job-fail-actions");
+            actionsDiv.innerHTML = "";
+            var links = data.result_links || {};
+            var failureKind = data.failure_kind || "";
+
+            // View report (if report_id exists)
+            if (links.report) {
+                actionsDiv.innerHTML += '<a href="' + links.report + '" class="btn-action">查看报告</a>';
+            }
+
+            // Retry sync (for sync_failed_after_report)
+            if (failureKind === "sync_failed_after_report" && links.retry_sync) {
+                actionsDiv.innerHTML += '<form method="post" action="' + links.retry_sync + '" style="display:inline"><button type="submit" class="btn-action">重试同步</button></form>';
+            }
+
+            // Retry (for analysis/transcript/report/rerun failures)
+            if (failureKind !== "sync_failed_after_report" && links.retry) {
+                actionsDiv.innerHTML += '<a href="/sources/channels" class="btn-action">返回修改</a>';
+            }
+
+            // View logs
+            if (links.logs) {
+                actionsDiv.innerHTML += '<a href="' + links.logs + '" class="btn-action btn-secondary">查看日志</a>';
+            }
+
+            actionsDiv.innerHTML += '<a href="/tasks" class="btn-action btn-secondary">返回整理任务</a>';
         }
         document.getElementById("job-result").style.display = "block";
     }

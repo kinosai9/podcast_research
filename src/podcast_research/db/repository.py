@@ -588,6 +588,30 @@ def get_channel(session: Session, channel_id: int) -> dict | None:
     }
 
 
+def update_channel(
+    session: Session,
+    channel_id: int,
+    name: str | None = None,
+    priority: str | None = None,
+    default_focus: str | None = None,
+    default_depth: str | None = None,
+) -> bool:
+    """Update editable fields of a channel. Returns True if updated."""
+    ch = session.query(Channel).filter_by(id=channel_id).first()
+    if not ch:
+        return False
+    if name is not None:
+        ch.name = name
+    if priority is not None:
+        ch.priority = priority
+    if default_focus is not None:
+        ch.default_focus = default_focus
+    if default_depth is not None:
+        ch.default_depth = default_depth
+    session.flush()
+    return True
+
+
 def delete_channel(session: Session, channel_id: int) -> bool:
     """Soft-delete a channel by setting is_active=False. Returns True if deleted."""
     ch = session.query(Channel).filter_by(id=channel_id).first()
@@ -662,6 +686,7 @@ def list_channel_videos(
             "report_id": cv.report_id,
             "failure_reason": cv.failure_reason,
             "active_job_id": cv.active_job_id,
+            "last_job_id": cv.last_job_id,
             "last_checked_at": cv.last_checked_at,
         }
         for cv in q.all()
@@ -706,6 +731,7 @@ def get_channel_video_by_video_id(session: Session, video_id: str) -> dict | Non
         "report_id": cv.report_id,
         "failure_reason": cv.failure_reason,
         "active_job_id": cv.active_job_id,
+        "last_job_id": cv.last_job_id,
     }
 
 

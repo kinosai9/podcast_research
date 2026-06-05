@@ -59,6 +59,8 @@ def _migrate_channel_videos_table(engine) -> None:
     migrations = [
         ("last_checked_at", "DATETIME"),
         ("failure_reason", "TEXT DEFAULT ''"),
+        ("active_job_id", "VARCHAR(20)"),
+        ("last_job_id", "VARCHAR(20)"),
     ]
     with engine.begin() as conn:
         for col_name, col_type in migrations:

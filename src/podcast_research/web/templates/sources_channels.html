@@ -65,7 +65,8 @@
     </thead>
     <tbody>
     {% for ch in channels %}
-        <tr>
+        <!-- ── Display Row ── -->
+        <tr id="row-display-{{ ch.id }}" class="channel-display-row">
             <td>
                 <strong>{{ ch.name or ch.youtube_channel_id }}</strong>
                 {% if ch.url %}
@@ -96,9 +97,42 @@
                 <form method="post" action="/sources/channels/{{ ch.id }}/refresh" style="display:inline">
                     <button type="submit" class="btn-action btn-sm btn-secondary">刷新</button>
                 </form>
+                <button type="button" class="btn-action btn-sm btn-secondary"
+                        onclick="toggleEdit({{ ch.id }})">编辑</button>
                 <form method="post" action="/sources/channels/{{ ch.id }}/delete" style="display:inline"
                       onsubmit="return confirm('确定删除频道「{{ ch.name or ch.youtube_channel_id }}」吗？频道下的视频列表也会被移除。')">
                     <button type="submit" class="btn-action btn-sm btn-secondary" style="color:#c00">删除</button>
+                </form>
+            </td>
+        </tr>
+        <!-- ── Edit Row (hidden by default) ── -->
+        <tr id="row-edit-{{ ch.id }}" class="channel-edit-row" style="display:none">
+            <td colspan="6">
+                <form method="post" action="/sources/channels/{{ ch.id }}/edit" class="form-row" style="margin:0">
+                    <div class="form-group" style="flex:2">
+                        <label for="edit_name_{{ ch.id }}">频道名称</label>
+                        <input type="text" id="edit_name_{{ ch.id }}" name="name"
+                               value="{{ ch.name or ch.youtube_channel_id }}" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit_priority_{{ ch.id }}">优先级</label>
+                        <select id="edit_priority_{{ ch.id }}" name="priority">
+                            <option value="core" {% if ch.priority == 'core' %}selected{% endif %}>核心</option>
+                            <option value="watch" {% if ch.priority == 'watch' %}selected{% endif %}>关注</option>
+                            <option value="archive" {% if ch.priority == 'archive' %}selected{% endif %}>归档</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex:2">
+                        <label for="edit_focus_{{ ch.id }}">关注领域</label>
+                        <input type="text" id="edit_focus_{{ ch.id }}" name="default_focus"
+                               value="{{ ch.default_focus or '' }}"
+                               placeholder="AI Infrastructure, Agent, 模型供应商">
+                    </div>
+                    <div class="form-group" style="align-self:flex-end">
+                        <button type="submit" class="btn-action">保存</button>
+                        <button type="button" class="btn-action btn-secondary"
+                                onclick="toggleEdit({{ ch.id }})">取消</button>
+                    </div>
                 </form>
             </td>
         </tr>
@@ -115,5 +149,19 @@
     <a href="/dashboard" class="btn-action btn-secondary">返回控制台</a>
     <a href="/content/new" class="btn-action" style="margin-left:8px">直接分析视频</a>
 </div>
+
+<script>
+function toggleEdit(channelId) {
+    var displayRow = document.getElementById('row-display-' + channelId);
+    var editRow = document.getElementById('row-edit-' + channelId);
+    if (displayRow.style.display === 'none') {
+        displayRow.style.display = '';
+        editRow.style.display = 'none';
+    } else {
+        displayRow.style.display = 'none';
+        editRow.style.display = '';
+    }
+}
+</script>
 
 {% endblock %}

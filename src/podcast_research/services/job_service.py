@@ -86,6 +86,16 @@ def _now_iso() -> str:
 
 
 @dataclass
+class JobEvent:
+    """Lightweight event record for job timeline / logs."""
+    timestamp: str
+    level: str  # info / warning / error
+    stage: str
+    message: str
+    detail: str | None = None
+
+
+@dataclass
 class AnalysisJob:
     """Unified job model for all background task types.
 
@@ -133,6 +143,9 @@ class AnalysisJob:
     source_type: str = ""       # "channel_video" | "manual" | ""
     source_channel_id: int | None = None
     video_id: str = ""
+
+    # P2-M.4.1: Event log for failure UX & task logs page
+    events: list[JobEvent] = field(default_factory=list)
 
 
 # In-memory store
@@ -228,13 +241,22 @@ def update_job(
     error: str = "",
     current_step: int | None = None,
     total_steps: int | None = None,
+    event_level: str = "",
+    event_detail: str | None = None,
 ) -> None:
-    """Thread-safe job update. Always bumps last_heartbeat_at."""
+    """Thread-safe job update. Always bumps last_heartbeat_at.
+
+    P2-M.4.1: Records a JobEvent when stage/status/error changes.
+    """
     now = _now_epoch()
     with _lock:
         job = _JOBS.get(job_id)
         if not job:
             return
+        stage_changed = bool(stage and stage != job.stage)
+        status_changed = bool(status and status != job.status)
+        has_error = bool(error)
+
         if stage:
             job.stage = stage
             if not message:
@@ -256,9 +278,36 @@ def update_job(
         if not job.started_at:
             job.started_at = _now_iso()
 
+        # Record event for stage/status/error transitions
+        if has_error:
+            _add_event(job, "error", job.stage, message or error, event_detail or error)
+        elif status_changed and status in ("success", "failed"):
+            level = "info" if status == "success" else "error"
+            _add_event(job, level, job.stage, message or _stage_message(job.stage), event_detail)
+        elif stage_changed:
+            _add_event(job, event_level or "info", job.stage, message or _stage_message(job.stage), event_detail)
+
 
 def _stage_message(stage: str) -> str:
     return _ALL_STAGES.get(stage, stage)
+
+
+def _add_event(
+    job: AnalysisJob,
+    level: str,
+    stage: str,
+    message: str,
+    detail: str | None = None,
+) -> None:
+    """Record a JobEvent on the job for timeline / failure diagnosis."""
+    event = JobEvent(
+        timestamp=_now_iso(),
+        level=level,
+        stage=stage,
+        message=message,
+        detail=detail,
+    )
+    job.events.append(event)
 
 
 def _check_heartbeat(job: AnalysisJob, now: float) -> str:
@@ -312,10 +361,142 @@ def _build_can_leave(job: AnalysisJob, now: float) -> bool:
     return elapsed >= LONG_JOB_THRESHOLD
 
 
+# ── P2-M.4.1: Failure kind detection ──────────────────────────────────
+
+def _compute_failure_kind(job: AnalysisJob) -> str:
+    """Determine the failure category for UX display.
+
+    Returns one of:
+        transcript_failed — before transcript fetch, no report_id
+        analysis_failed — transcript fetched, no report_id, failed in analysis
+        report_failed — failed during report saving, no report_id
+        sync_failed_after_report — report_id exists, failed during sync
+        rerun_failed — job is a rerun/full_flow with "重新整理" in title
+        unknown — fallback
+    """
+    is_rerun = "重新整理" in (job.title or "")
+
+    if job.report_id:
+        # Report exists → sync must have failed
+        if is_rerun:
+            return "rerun_failed"
+        return "sync_failed_after_report"
+
+    # No report_id → analysis phase failed
+    # Check which stage we got to
+    if job.stage in ("queued", "fetching_transcript", ""):
+        return "transcript_failed"
+
+    if job.stage in ("cleaning", "analyzing", "analyzing_chunk"):
+        return "analysis_failed"
+
+    if job.stage in ("saving", "saving_report"):
+        return "report_failed"
+
+    if is_rerun:
+        return "rerun_failed"
+
+    return "analysis_failed"
+
+
+def _compute_step_list(job: AnalysisJob) -> tuple[list[str], list[str]]:
+    """Compute completed and pending steps based on job stage and events.
+
+    Returns (completed_steps, pending_steps).
+    """
+    all_steps: list[str] = []
+    if job.job_type == "full_flow":
+        all_steps = [
+            "获取视频字幕",
+            "生成研究报告",
+            "同步到 Obsidian 知识库",
+            "更新主题和公司卡片",
+            "生成观点和信号",
+            "建立知识关联",
+            "刷新研究摘要",
+            "刷新我的关注",
+        ]
+    elif job.job_type == "analysis":
+        all_steps = [
+            "获取视频字幕",
+            "拆解关键信息",
+            "生成研究报告",
+        ]
+    elif job.job_type == "sync":
+        all_steps = [
+            "导出报告到 Obsidian",
+            "更新主题和公司卡片",
+            "生成观点和信号",
+            "建立知识关联",
+            "刷新研究摘要",
+            "刷新我的关注",
+        ]
+    elif job.job_type == "channel_refresh":
+        all_steps = [
+            "获取频道视频列表",
+            "读取视频发布时间",
+            "检查已整理状态",
+            "更新视频列表",
+        ]
+
+    # Map stage to the step index that was completed
+    stage_order: dict[str, int] = {
+        # full_flow / analysis
+        "fetching_transcript": 0,
+        "cleaning": 0,
+        "analyzing": 1,
+        "analyzing_chunk": 1,
+        "saving": 2,
+        "saving_report": 2,
+        # sync
+        "exporting_report": 0,
+        "updating_cards": 1,
+        "generating_claims_signals": 2,
+        "updating_relations": 3,
+        "refreshing_brief": 4,
+        "refreshing_watchlist": 5,
+        # channel_refresh
+        "fetching_channel": 0,
+        "reading_video_metadata": 1,
+        "checking_import_status": 2,
+        "saving_video_list": 3,
+    }
+
+    # "failed" stage means the last step before it was the one we stalled on
+    last_step = stage_order.get(job.stage, -1)
+
+    # For sync_failed_after_report, the analysis steps completed but sync failed
+    failure_kind = _compute_failure_kind(job)
+    if failure_kind == "sync_failed_after_report":
+        # Analysis part is done (steps 0-2 in full_flow), sync started but failed
+        if job.job_type == "sync":
+            # Sync-only job — check how far we got
+            pass  # use last_step as-is
+        else:
+            # Full flow — first 2 steps (到了 saving_report) then sync started
+            # Map sync stages for the second half
+            sync_stage_map = {
+                "exporting_report": 2,
+                "updating_cards": 3,
+                "generating_claims_signals": 4,
+                "updating_relations": 5,
+                "refreshing_brief": 6,
+                "refreshing_watchlist": 7,
+            }
+            if job.stage in sync_stage_map:
+                last_step = sync_stage_map[job.stage]
+
+    completed = all_steps[:last_step] if last_step > 0 else []
+    pending = all_steps[last_step:] if last_step >= 0 else all_steps
+
+    return completed, pending
+
+
 def get_job_status(job_id: str) -> dict[str, Any] | None:
     """Return unified status dict for GET /tasks/{id}/status polling.
 
     Computes heartbeat health, elapsed, can_leave_page, result_links on each call.
+    P2-M.4.1: Adds failure_kind, completed_steps, pending_steps, error_summary.
     """
     job = get_job(job_id)
     if not job:
@@ -329,6 +510,12 @@ def get_job_status(job_id: str) -> dict[str, Any] | None:
     # Build result_links based on job_type and status
     result_links: dict[str, str] = {}
     checklist: list[str] = []
+    completed_steps: list[str] = []
+    pending_steps: list[str] = []
+    failure_kind: str = ""
+    error_summary: str = ""
+    error_detail: str = ""
+
     if effective_status == "success":
         if job.job_type == "analysis":
             checklist = [
@@ -377,10 +564,30 @@ def get_job_status(job_id: str) -> dict[str, Any] | None:
             if job.source_channel_id:
                 result_links["videos"] = f"/sources/channels/{job.source_channel_id}/videos"
             result_links["sources"] = "/sources/channels"
-    elif effective_status == "failed" and job.job_type == "full_flow" and job.report_id:
-        # Sync failed after analysis succeeded — preserve report + retry links
-        result_links["report"] = f"/reports/{job.report_id}"
-        result_links["sync"] = f"/reports/{job.report_id}/sync"
+    elif effective_status == "failed":
+        failure_kind = _compute_failure_kind(job)
+        completed_steps, pending_steps = _compute_step_list(job)
+
+        # Error messages per failure kind
+        _FAILURE_MESSAGES = {
+            "transcript_failed": ("无法获取视频字幕", "请检查视频链接是否有效，或稍后重试。"),
+            "analysis_failed": ("AI 分析未完成", f"分析在「{_stage_message(job.stage)}」阶段失败。"),
+            "report_failed": ("报告生成失败", f"报告保存阶段失败。"),
+            "sync_failed_after_report": ("报告已生成，但知识库同步失败", job.error or "同步过程中遇到错误。"),
+            "rerun_failed": ("重新整理失败，旧版本已保留", job.error or "重新整理过程中遇到错误。"),
+        }
+        msg_info = _FAILURE_MESSAGES.get(failure_kind, ("整理失败", "请稍后重试。"))
+        error_summary, error_detail = msg_info
+
+        result_links["logs"] = f"/tasks/{job.job_id}/logs"
+
+        if failure_kind == "sync_failed_after_report":
+            result_links["report"] = f"/reports/{job.report_id}"
+            result_links["retry_sync"] = f"/reports/{job.report_id}/sync"
+        elif failure_kind == "rerun_failed":
+            result_links["retry"] = f"/tasks/{job.job_id}"
+        elif failure_kind in ("transcript_failed", "analysis_failed", "report_failed"):
+            result_links["retry"] = f"/tasks/{job.job_id}"
 
     # Build stage_progress for chunk display
     stage_progress = None
@@ -408,12 +615,16 @@ def get_job_status(job_id: str) -> dict[str, Any] | None:
         "job_type_label": JOB_TYPE_LABELS.get(job.job_type, job.job_type),
         "status": effective_status,
         "stage": job.stage,
+        "failed_stage": job.stage if effective_status == "failed" else "",
+        "failure_kind": failure_kind,
         "message": job.message,
         "title": job.title or JOB_TYPE_TITLES.get(job.job_type, ""),
         "source_url": job.source_url,
         "report_id": job.report_id,
         "report_url": f"/reports/{job.report_id}" if job.report_id else None,
         "error": job.error,
+        "error_summary": error_summary,
+        "error_detail": error_detail,
         "elapsed_seconds": elapsed,
         "current_step": job.current_step,
         "total_steps": job.total_steps,
@@ -421,6 +632,8 @@ def get_job_status(job_id: str) -> dict[str, Any] | None:
         "can_leave_page": can_leave,
         "created_at": job.created_at,
         "started_at": job.started_at,
+        "completed_steps": completed_steps,
+        "pending_steps": pending_steps,
         "result_links": result_links,
         "checklist": checklist,
         "success_msg": success_msg,
@@ -477,6 +690,12 @@ def start_job(job: AnalysisJob, progress_callback: Callable | None = None) -> No
             report_id = result.report_id
             update_job(job.job_id, report_id=report_id)
 
+            # Write back report_id immediately — even if daemon thread dies
+            # during sync (uvicorn --reload, process kill, etc.), the report
+            # is findable and retry-able.
+            _writeback_channel_video_status(job, status="analyzed",
+                                            report_id=report_id)
+
             if job.auto_sync:
                 # Full flow: chain sync after analysis
                 update_job(job.job_id, stage="saving_report",
@@ -496,14 +715,15 @@ def start_job(job: AnalysisJob, progress_callback: Callable | None = None) -> No
                 )
 
                 if sync_result.error:
-                    # Report generated but sync failed — user can retry
+                    # Report generated but sync failed — keep status "analyzed"
+                    # so the report_id stays linked and user can retry sync
                     update_job(
                         job.job_id, status="failed", stage="failed",
                         error=sync_result.error,
                         message="报告已生成，但知识库更新失败。",
                     )
                     _set_result_links_failed_sync(job.job_id, report_id)
-                    _writeback_channel_video_status(job, status="failed",
+                    _writeback_channel_video_status(job, status="analyzed",
                                                     failure_reason=sync_result.error)
                 else:
                     update_job(job.job_id, status="success", stage="success",
@@ -516,14 +736,16 @@ def start_job(job: AnalysisJob, progress_callback: Callable | None = None) -> No
                 update_job(job.job_id, status="success", stage="success",
                            message="报告已生成")
                 _set_result_links(job.job_id, "analysis", report_id)
-                _writeback_channel_video_status(job, status="analyzed",
-                                                report_id=report_id)
+                # report_id already written above with status="analyzed"
 
         except Exception as e:
+            # P2-M.3.1: If we already have report_id, preserve it in writeback
+            report_id_for_wb = job.report_id if job.report_id else None
             update_job(job.job_id, status="failed", stage="failed",
                        error=str(e), message="整理失败，请稍后重试")
-            _writeback_channel_video_status(job, status="failed",
-                                            failure_reason=str(e))
+            _writeback_channel_video_status(job, status="analyzed" if report_id_for_wb else "failed",
+                                            failure_reason=str(e),
+                                            report_id=report_id_for_wb)
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
@@ -670,6 +892,7 @@ def _writeback_channel_video_status(
                 ).first()
                 if cv:
                     cv.status = status
+                    cv.last_job_id = job.job_id  # P2-M.4.1: persist for log access
                     cv.active_job_id = None  # P2-M.2: job completed
                     cv.last_checked_at = datetime.now()
                     if report_id is not None:

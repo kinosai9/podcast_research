@@ -3126,7 +3126,7 @@ def archive_current_video_outputs(video_id: str, vault_path: Path) -> dict:
         dest = archive_dir / f"{rf.stem}_{ts}{rf.suffix}"
         if dest.exists():
             dest = archive_dir / f"{rf.stem}_{ts}_b{rf.suffix}"
-        shutil.copy2(str(rf), str(dest))
+        shutil.move(str(rf), str(dest))
         result["reports_archived"] += 1
 
     if not matched_report_files:

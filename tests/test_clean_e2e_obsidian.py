@@ -763,8 +763,8 @@ class TestArchiveCurrentVideoOutputs:
         assert len(archived_files) == 1
         assert "2026-06-01_TestChan_testVid001" in archived_files[0].name
 
-    def test_archive_does_not_delete_original(self, tmp_path):
-        """Archive copies, does not delete original file."""
+    def test_archive_moves_original_to_archive(self, tmp_path):
+        """Archive moves (not copies) the original file to Archive/Reports."""
         from podcast_research.exporters.obsidian import archive_current_video_outputs
 
         vault = tmp_path / "vault"
@@ -776,9 +776,9 @@ class TestArchiveCurrentVideoOutputs:
 
         archive_current_video_outputs("nodel1", vault)
 
-        # Original still exists
-        assert report_path.exists()
-        # Archive copy exists too
+        # Original is moved (not kept) — so 01_Reports is clean for rerun
+        assert not report_path.exists()
+        # Archive copy exists
         archive_dir = vault / "99_System" / "Archive" / "Reports"
         assert len(list(archive_dir.glob("*.md"))) == 1
 

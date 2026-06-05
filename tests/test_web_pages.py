@@ -1628,7 +1628,7 @@ class TestFullFlow:
             # Report was generated — links should be preserved
             assert data["report_id"] == 42
             assert data["result_links"]["report"] == "/reports/42"
-            assert "sync" in data["result_links"]  # retry link
+            assert "retry_sync" in data["result_links"]  # retry link (P2-M.4.1)
         finally:
             os.environ["OBSIDIAN_VAULT_PATH"] = old
 
@@ -1727,6 +1727,147 @@ class TestFullFlow:
         resp = api_client.get("/reports/1")
         assert resp.status_code == 200
         assert "同步到知识库" in resp.text
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# P2-M.4.1: Task Failure UX & Log Integration Tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestFailureUX:
+    """P2-M.4.1: Enhanced failure UX on task detail page."""
+
+    def test_failed_task_hides_spinner(self, api_client):
+        """Failed task detail page should not show spinner."""
+        from podcast_research.services.job_service import create_job, update_job
+
+        job = create_job(youtube_url="https://example.com/v=test",
+                         focus_areas=["AI"], depth="standard", mock=True)
+        update_job(job.job_id, status="failed", stage="failed",
+                   error="Test failure", message="Test failure message")
+
+        resp = api_client.get(f"/tasks/{job.job_id}")
+        assert resp.status_code == 200
+        # Failed jobs have spinner hidden by JS since status=failed
+        assert 'data-status="failed"' in resp.text
+
+    def test_failed_task_shows_failure_stage(self, api_client):
+        """Failed task status shows failed_stage field."""
+        from podcast_research.services.job_service import create_job, update_job
+
+        job = create_job(youtube_url="https://example.com/v=test2",
+                         focus_areas=["AI"], depth="standard", mock=True)
+        update_job(job.job_id, status="failed", stage="analyzing",
+                   error="Analysis failed", message="AI 分析未完成")
+
+        status = api_client.get(f"/tasks/{job.job_id}/status").json()
+        assert status["status"] == "failed"
+        assert status["failed_stage"] == "analyzing"
+
+    def test_sync_failed_after_report_shows_correct_message(self, api_client):
+        """sync_failed_after_report shows '报告已生成，但知识库同步失败'."""
+        from podcast_research.services.job_service import create_job, update_job
+
+        job = create_job(youtube_url="https://example.com/v=t3",
+                         focus_areas=["AI"], depth="standard", mock=True,
+                         auto_sync=True)
+        update_job(job.job_id, report_id=42)
+        update_job(job.job_id, status="failed", stage="exporting_report",
+                   error="Sync error", message="报告已生成，但知识库更新失败。")
+
+        status = api_client.get(f"/tasks/{job.job_id}/status").json()
+        assert status["status"] == "failed"
+        assert status["failure_kind"] == "sync_failed_after_report"
+        assert "报告已生成" in status["error_summary"]
+
+    def test_sync_failed_after_report_has_retry_links(self, api_client):
+        """sync_failed_after_report result_links has report and retry_sync."""
+        from podcast_research.services.job_service import create_job, update_job
+
+        job = create_job(youtube_url="https://example.com/v=t4",
+                         focus_areas=["AI"], depth="standard", mock=True,
+                         auto_sync=True)
+        update_job(job.job_id, report_id=88)
+        update_job(job.job_id, status="failed", stage="exporting_report",
+                   error="sync died", message="failed")
+
+        status = api_client.get(f"/tasks/{job.job_id}/status").json()
+        links = status["result_links"]
+        assert links["report"] == "/reports/88"
+        assert "retry_sync" in links
+
+    def test_analysis_failed_has_no_report(self, api_client):
+        """analysis_failed: no report_id, failure_kind = analysis_failed."""
+        from podcast_research.services.job_service import create_job, update_job
+
+        job = create_job(youtube_url="https://example.com/v=t5",
+                         focus_areas=["AI"], depth="standard", mock=True)
+        update_job(job.job_id, status="failed", stage="analyzing",
+                   error="LLM timeout", message="AI 分析未完成")
+
+        status = api_client.get(f"/tasks/{job.job_id}/status").json()
+        assert status["failure_kind"] == "analysis_failed"
+        assert status["report_id"] is None
+
+    def test_task_logs_page_opens(self, api_client):
+        """GET /tasks/{id}/logs returns valid HTML."""
+        from podcast_research.services.job_service import create_job, update_job
+
+        job = create_job(youtube_url="https://example.com/v=t6",
+                         focus_areas=["AI"], depth="standard", mock=True)
+        update_job(job.job_id, stage="analyzing", message="analysis started")
+        update_job(job.job_id, status="failed", stage="failed",
+                   error="test error", message="failed")
+
+        resp = api_client.get(f"/tasks/{job.job_id}/logs")
+        assert resp.status_code == 200
+        assert "任务日志" in resp.text
+
+    def test_job_events_recorded_on_progress(self):
+        """Stage change in update_job records a JobEvent."""
+        from podcast_research.services.job_service import create_job, update_job
+
+        job = create_job(youtube_url="https://example.com/v=t7",
+                         focus_areas=["AI"], depth="standard", mock=True)
+        update_job(job.job_id, stage="fetching_transcript",
+                   message="fetching")
+
+        assert len(job.events) >= 1
+        assert job.events[0].level == "info"
+        assert job.events[0].stage == "fetching_transcript"
+
+    def test_job_events_recorded_on_failure(self):
+        """Failure records error-level JobEvent."""
+        from podcast_research.services.job_service import create_job, update_job
+
+        job = create_job(youtube_url="https://example.com/v=t8",
+                         focus_areas=["AI"], depth="standard", mock=True)
+        update_job(job.job_id, status="failed", stage="failed",
+                   error="Bad thing", message="failed")
+
+        error_events = [e for e in job.events if e.level == "error"]
+        assert len(error_events) >= 1
+
+    def test_logs_page_shows_events(self, api_client):
+        """Task logs page shows recorded events in table."""
+        from podcast_research.services.job_service import create_job, update_job
+
+        job = create_job(youtube_url="https://example.com/v=t9",
+                         focus_areas=["AI"], depth="standard", mock=True)
+        update_job(job.job_id, stage="fetching_transcript", message="fetching")
+        update_job(job.job_id, status="failed", stage="failed",
+                   error="err", message="fail")
+
+        resp = api_client.get(f"/tasks/{job.job_id}/logs")
+        assert resp.status_code == 200
+        # Should contain event timestamps/messages
+        assert "fetching" in resp.text or "事件时间线" in resp.text
+
+    def test_logs_page_not_found_for_unknown_job(self, api_client):
+        """Unknown job id shows not_found page."""
+        resp = api_client.get("/tasks/nonexistent_job_123/logs")
+        assert resp.status_code == 200
+        assert "不存在" in resp.text or "已过期" in resp.text
 
 
 # ── P2-L.1 Vault Setup Wizard Tests ─────────────────────────────────

@@ -893,6 +893,32 @@ def api_task_status(job_id: str):
     return JSONResponse(data)
 
 
+@router.get("/tasks/{job_id}/logs")
+def page_task_logs(request: Request, job_id: str):
+    """P2-M.4.1: Task event log detail page."""
+    from podcast_research.services.job_service import get_job, get_job_status
+
+    job = get_job(job_id)
+    if not job:
+        return _render("task_logs.html", {
+            "request": request, "not_found": True, "job_id": job_id,
+            "job": None, "status": {}, "events": [],
+        })
+
+    status = get_job_status(job_id) or {}
+
+    ctx = {
+        "request": request,
+        "job_id": job_id,
+        "job": job,
+        "status": status,
+        "events": job.events,
+        "not_found": False,
+    }
+    ctx.update(_flash(request))
+    return _render("task_logs.html", ctx)
+
+
 def _format_elapsed(seconds: int) -> str:
     if seconds < 0:
         return "—"
@@ -1152,9 +1178,22 @@ def _build_sources_channels_context(vp_str: str) -> dict:
     }
 
 
-def _build_sources_videos_context(channel_id: int, vp_str: str) -> dict:
-    """Build context for /sources/channels/{id}/videos page."""
+def _build_sources_videos_context(
+    channel_id: int, vp_str: str,
+    status_filter: str | None = None,
+    watchlist_filter: bool = False,
+    long_filter: bool = False,
+) -> dict | None:
+    """Build context for /sources/channels/{id}/videos page.
+
+    Supports optional filters:
+        status_filter: filter by import status
+        watchlist_filter: only show watchlist-matching videos
+        long_filter: only show videos > 90 minutes
+    """
     from podcast_research.db.repository import list_channel_videos, get_channel, detect_video_import_status
+    from podcast_research.services.watchlist_matcher import match_video_to_watchlist, compute_recommendation
+    from podcast_research.workspace.watchlist import load_watchlist, WatchlistConfig
 
     session = _get_session()
     try:
@@ -1162,9 +1201,28 @@ def _build_sources_videos_context(channel_id: int, vp_str: str) -> dict:
         if not channel:
             return None
         videos = list_channel_videos(session, channel_id)
-        # Enrich with import status
+
+        # Load watchlist once
+        vp = Path(vp_str)
+        watchlist = load_watchlist(vp) if vp.exists() else WatchlistConfig()
+
+        # Enrich with import status + watchlist match + recommendation badges
         for v in videos:
             v["import_status"] = detect_video_import_status(session, v["video_id"], vp_str)
+            match = match_video_to_watchlist(v["title"] or "", watchlist)
+            v["watchlist_match"] = match
+            v["recommendation_badges"] = compute_recommendation(
+                v["import_status"], match, v.get("duration_seconds", 0),
+            )
+
+        # Apply filters
+        if status_filter:
+            videos = [v for v in videos if v["import_status"] == status_filter]
+        if watchlist_filter:
+            videos = [v for v in videos if v.get("watchlist_match") and v["watchlist_match"].matched]
+        if long_filter:
+            videos = [v for v in videos if v.get("duration_seconds", 0) > 90 * 60]
+
     finally:
         session.close()
 
@@ -1207,12 +1265,23 @@ def page_sources_channels(request: Request):
 
 
 @router.get("/sources/channels/{channel_id}/videos")
-def page_sources_videos(request: Request, channel_id: int):
+def page_sources_videos(
+    request: Request,
+    channel_id: int,
+    status: str | None = None,
+    watchlist_match: str | None = None,
+    long: str | None = None,
+):
     vp_str = _get_vault_path()
     if not vp_str:
         return RedirectResponse(url="/setup/vault?msg=error:请先配置知识库", status_code=303)
 
-    ctx = _build_sources_videos_context(channel_id, vp_str)
+    ctx = _build_sources_videos_context(
+        channel_id, vp_str,
+        status_filter=status,
+        watchlist_filter=(watchlist_match == "1"),
+        long_filter=(long == "1"),
+    )
     if ctx is None:
         return RedirectResponse(url="/sources/channels?msg=error:频道不存在", status_code=303)
 
@@ -1221,6 +1290,9 @@ def page_sources_videos(request: Request, channel_id: int):
     ctx["stage_labels"] = _STAGE_LABELS
     ctx["priority_labels"] = _PRIORITY_LABELS
     ctx["channel_id"] = channel_id
+    ctx["current_status"] = status or ""
+    ctx["current_watchlist"] = watchlist_match or ""
+    ctx["current_long"] = long or ""
     return _render("sources_videos.html", ctx)
 
 
@@ -1256,14 +1328,33 @@ def action_add_channel(
             status_code=303,
         )
 
+    # Normalize URL for duplicate detection
+    def _normalize_channel_url(u: str) -> str:
+        u = u.strip().rstrip("/").lower()
+        u = u.replace("https://www.youtube.com/", "https://youtube.com/")
+        u = u.replace("http://youtube.com/", "https://youtube.com/")
+        return u
+
+    normalized_url = _normalize_channel_url(channel_url)
+
     session = _get_session()
     try:
+        # Check by youtube_channel_id (primary dedup)
         existing = session.query(Channel).filter_by(youtube_channel_id=yt_channel_id).first()
         if existing:
             return RedirectResponse(
                 url=f"/sources/channels/{existing.id}/videos?msg=success:频道已存在，无需重复添加",
                 status_code=303,
             )
+
+        # Check by normalized URL (secondary dedup)
+        all_active = session.query(Channel).filter_by(is_active=True).all()
+        for ch in all_active:
+            if ch.url and _normalize_channel_url(ch.url) == normalized_url:
+                return RedirectResponse(
+                    url=f"/sources/channels/{ch.id}/videos?msg=success:频道已存在（相同 URL），无需重复添加",
+                    status_code=303,
+                )
 
         ch_id = upsert_channel(
             session,
@@ -1286,6 +1377,52 @@ def action_add_channel(
 
     return RedirectResponse(
         url=f"/sources/channels/{ch_id}/videos?msg=success:频道已添加，可同步视频列表",
+        status_code=303,
+    )
+
+
+@router.post("/sources/channels/{channel_id}/edit")
+def action_edit_channel(
+    request: Request,
+    channel_id: int,
+    name: str = Form(...),
+    priority: str = Form("watch"),
+    default_focus: str = Form(""),
+):
+    """Edit channel name / priority / focus areas."""
+    vp_str = _get_vault_path()
+    if not vp_str:
+        return RedirectResponse(url="/setup/vault?msg=error:请先配置知识库", status_code=303)
+
+    from podcast_research.db.repository import update_channel
+
+    session = _get_session()
+    try:
+        ok = update_channel(
+            session,
+            channel_id=channel_id,
+            name=name.strip() or None,
+            priority=priority,
+            default_focus=default_focus.strip() or None,
+        )
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        return RedirectResponse(
+            url=f"/sources/channels?msg=error:编辑失败 — {e}",
+            status_code=303,
+        )
+    finally:
+        session.close()
+
+    if not ok:
+        return RedirectResponse(
+            url="/sources/channels?msg=error:频道不存在",
+            status_code=303,
+        )
+
+    return RedirectResponse(
+        url="/sources/channels?msg=success:频道信息已更新",
         status_code=303,
     )
 
@@ -1414,7 +1551,9 @@ def action_import_video(
                 status_code=303,
             )
 
-        if import_status in ("analyzed", "synced"):
+        # P2-M.3.1: "analyzed" + report_id → allow sync retry (sync may have failed)
+        # "synced" → block (already fully imported)
+        if import_status == "synced":
             return RedirectResponse(
                 url=f"/sources/channels/{channel_id}/videos?msg=info:该视频已经整理过，可直接查看报告",
                 status_code=303,
@@ -1432,8 +1571,11 @@ def action_import_video(
             if depth == "standard":
                 depth = channel.get("default_depth", "standard")
 
-        # P2-M.2: For failed + existing report, retry sync only
-        is_sync_retry = (import_status == "failed" and existing_report_id is not None)
+        # P2-M.2 / P2-M.3.1: Sync retry — failed or analyzed with report_id
+        is_sync_retry = (
+            import_status in ("failed", "analyzed")
+            and existing_report_id is not None
+        )
 
         session.commit()
     finally:
