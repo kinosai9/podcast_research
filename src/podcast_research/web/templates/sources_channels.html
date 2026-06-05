@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}信息源管理 — 投资音视频研究助手{% endblock %}
+{% block title %}信息源管理{% endblock %}
 {% block content %}
 
 {% if flash_msg %}
@@ -7,169 +7,174 @@
 {% endif %}
 
 <div class="page-header">
-    <h2>信息源管理</h2>
-    <p class="subtitle">管理 YouTube 频道信息源，同步视频并选择有价值的内容整理进知识库。</p>
+    <h1 style="font-size:1.3rem;font-weight:700;margin:0 0 4px">信息源管理</h1>
+    <p class="page-desc" style="margin:0">管理 YouTube 频道信息源，发现新视频，选择值得整理的内容进入知识库。</p>
 </div>
 
 <!-- ── Add Channel Card ── -->
-<div class="add-channel-card">
-    <h3>添加 YouTube 频道</h3>
-    <form method="post" action="/sources/channels/add" class="form-row">
-        <div class="form-group" style="flex:2;min-width:220px">
-            <label for="channel_url">频道 URL</label>
-            <input type="text" id="channel_url" name="channel_url" required
-                   placeholder="https://www.youtube.com/@ChannelHandle">
+<section class="source-card add-channel-card">
+    <div class="card-header">
+        <div>
+            <h2>添加 YouTube 频道</h2>
+            <p>添加长期关注的信息源，并设置默认分析方向。</p>
         </div>
-        <div class="form-group" style="flex:1;min-width:120px">
-            <label for="name">频道名称 <small style="font-weight:400;text-transform:none">(可选)</small></label>
-            <input type="text" id="name" name="name" placeholder="频道名称">
+    </div>
+    <form method="post" action="/sources/channels/add" class="channel-form-grid">
+        <div class="form-group span-2">
+            <label class="form-label" for="channel_url">频道 URL</label>
+            <input type="text" id="channel_url" name="channel_url" class="form-control"
+                   required placeholder="https://www.youtube.com/@ChannelHandle">
         </div>
-        <div class="form-group" style="min-width:90px">
-            <label for="priority">优先级</label>
-            <select id="priority" name="priority">
+        <div class="form-group">
+            <label class="form-label" for="name">频道名称 <span class="optional">(可选)</span></label>
+            <input type="text" id="name" name="name" class="form-control" placeholder="自动识别">
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="priority">优先级</label>
+            <select id="priority" name="priority" class="form-control">
                 <option value="watch" selected>关注</option>
                 <option value="core">核心</option>
                 <option value="archive">归档</option>
             </select>
         </div>
-        <div class="form-group" style="flex:1;min-width:140px">
-            <label for="default_focus">默认关注领域 <small style="font-weight:400;text-transform:none">(可选)</small></label>
-            <input type="text" id="default_focus" name="default_focus"
+        <div class="form-group">
+            <label class="form-label" for="default_focus">默认关注领域 <span class="optional">(可选)</span></label>
+            <input type="text" id="default_focus" name="default_focus" class="form-control"
                    placeholder="AI, Tech, Investment">
         </div>
-        <div class="form-group" style="min-width:90px">
-            <label for="default_depth">分析深度</label>
-            <select id="default_depth" name="default_depth">
+        <div class="form-group">
+            <label class="form-label" for="default_depth">分析深度</label>
+            <select id="default_depth" name="default_depth" class="form-control">
                 <option value="standard" selected>标准</option>
                 <option value="deep">深入</option>
             </select>
         </div>
-        <div class="form-group" style="align-self:flex-end">
-            <button type="submit" class="btn-action">添加频道</button>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">添加频道</button>
         </div>
     </form>
-</div>
+</section>
 
-<!-- ── Channel Overview Table ── -->
-{% if channels %}
-<div class="section-header">
-    <h2>频道概览</h2>
-    <span class="section-count">{{ channels|length }} 个频道</span>
-</div>
-<table class="channel-table">
-    <thead>
-        <tr>
-            <th style="width:22%">频道</th>
-            <th style="width:8%">优先级</th>
-            <th style="width:22%">研究定位</th>
-            <th style="width:18%">视频</th>
-            <th style="width:12%">最近刷新</th>
-            <th style="width:18%">操作</th>
-        </tr>
-    </thead>
-    <tbody>
-    {% for ch in channels %}
-        <!-- Display Row -->
-        <tr id="row-display-{{ ch.id }}">
-            <td class="ch-name">
-                {{ ch.name or ch.youtube_channel_id }}
-                {% if ch.url %}
-                <small><a href="{{ ch.url }}" target="_blank" rel="noopener">{{ ch.url[:45] }}{% if ch.url|length > 45 %}…{% endif %}</a></small>
-                {% endif %}
-            </td>
-            <td>
-                <span class="priority-badge {{ ch.priority }}">{{ priority_labels.get(ch.priority, ch.priority) }}</span>
-            </td>
-            <td class="ch-tags">
-                {% if ch.default_focus %}
-                {% set tags = ch.default_focus.split(',') %}
-                {% for tag in tags[:3] %}
-                <span class="tag-chip">{{ tag.strip()[:20] }}</span>
-                {% endfor %}
-                {% if tags|length > 3 %}
-                <span class="tag-more">+{{ tags|length - 3 }}</span>
-                {% endif %}
-                {% else %}
-                <span style="color:var(--muted);font-size:0.78rem">—</span>
-                {% endif %}
-            </td>
-            <td class="ch-videos">
-                <span class="vid-stat"><span class="vid-num">{{ ch.total_videos }}</span> <span class="vid-label">总计</span></span>
-                {% if ch.video_counts %}
-                {% for st, cnt in ch.video_counts.items() if st in ('new','synced','analyzed') %}
-                <span class="vid-stat"><span class="vid-num">{{ cnt }}</span> <span class="vid-label">{{ stage_labels.get(st, st) }}</span></span>
-                {% endfor %}
-                {% endif %}
-            </td>
-            <td style="font-size:0.78rem;color:var(--muted)">
-                {{ ch.last_refreshed_at.strftime('%m-%d %H:%M') if ch.last_refreshed_at else '从未' }}
-            </td>
-            <td class="actions-cell">
-                <a href="/sources/channels/{{ ch.id }}/videos" class="btn-action btn-sm" style="background:var(--accent);color:#fff;border-color:var(--accent)">查看视频</a>
-                <form method="post" action="/sources/channels/{{ ch.id }}/refresh" style="display:inline">
-                    <button type="submit" class="btn-sm">刷新</button>
-                </form>
-                <button type="button" class="btn-ghost" onclick="toggleEdit({{ ch.id }})">编辑</button>
-                <form method="post" action="/sources/channels/{{ ch.id }}/delete" style="display:inline"
-                      onsubmit="return confirm('确定删除频道「{{ ch.name or ch.youtube_channel_id }}」？')">
-                    <button type="submit" class="btn-ghost danger">删除</button>
-                </form>
-            </td>
-        </tr>
-        <!-- Edit Row (hidden) -->
-        <tr id="row-edit-{{ ch.id }}" style="display:none" class="edit-row-wrap">
-            <td colspan="6" class="edit-row">
-                <form method="post" action="/sources/channels/{{ ch.id }}/edit" class="edit-form">
-                    <div class="form-group" style="flex:2;min-width:140px">
-                        <label for="edit_name_{{ ch.id }}">频道名称</label>
-                        <input type="text" id="edit_name_{{ ch.id }}" name="name"
-                               value="{{ ch.name or ch.youtube_channel_id }}" required>
-                    </div>
-                    <div class="form-group" style="min-width:90px">
-                        <label for="edit_priority_{{ ch.id }}">优先级</label>
-                        <select id="edit_priority_{{ ch.id }}" name="priority">
-                            <option value="core" {% if ch.priority == 'core' %}selected{% endif %}>核心</option>
-                            <option value="watch" {% if ch.priority == 'watch' %}selected{% endif %}>关注</option>
-                            <option value="archive" {% if ch.priority == 'archive' %}selected{% endif %}>归档</option>
-                        </select>
-                    </div>
-                    <div class="form-group" style="flex:2;min-width:160px">
-                        <label for="edit_focus_{{ ch.id }}">关注领域</label>
-                        <input type="text" id="edit_focus_{{ ch.id }}" name="default_focus"
-                               value="{{ ch.default_focus or '' }}" placeholder="逗号分隔">
-                    </div>
-                    <div class="edit-actions">
-                        <button type="submit" class="btn-action btn-sm" style="font-size:0.75rem">保存</button>
-                        <button type="button" class="btn-ghost" onclick="toggleEdit({{ ch.id }})">取消</button>
-                    </div>
-                </form>
-            </td>
-        </tr>
-    {% endfor %}
-    </tbody>
-</table>
-{% else %}
-<div class="empty-state">
-    <p>还没有添加任何频道。使用上方表单添加 YouTube 频道。</p>
-</div>
-{% endif %}
+<!-- ── Channel Overview Card ── -->
+<section class="source-card channel-overview-card">
+    <div class="card-header">
+        <div>
+            <h2>频道概览</h2>
+            <p>{{ channels|length }} 个频道</p>
+        </div>
+    </div>
+    {% if channels %}
+    <div class="channel-table-wrap">
+        <table class="channel-table">
+            <thead>
+                <tr>
+                    <th>频道</th>
+                    <th>优先级</th>
+                    <th>研究定位</th>
+                    <th>视频状态</th>
+                    <th>最近刷新</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for ch in channels %}
+                <tr id="row-display-{{ ch.id }}">
+                    <td>
+                        <span class="ch-name">{{ ch.name or ch.youtube_channel_id }}</span>
+                        {% if ch.url %}
+                        <span class="ch-url"><a href="{{ ch.url }}" target="_blank" rel="noopener">{{ ch.url[:50] }}{% if ch.url|length > 50 %}…{% endif %}</a></span>
+                        {% endif %}
+                    </td>
+                    <td><span class="priority-badge {{ ch.priority }}">{{ priority_labels.get(ch.priority, ch.priority) }}</span></td>
+                    <td>
+                        <div class="ch-tags">
+                            {% if ch.default_focus %}
+                            {% set tags = ch.default_focus.split(',') %}
+                            {% for tag in tags[:3] %}
+                            <span class="tag-chip">{{ tag.strip()[:20] }}</span>
+                            {% endfor %}
+                            {% if tags|length > 3 %}
+                            <span class="tag-more">+{{ tags|length - 3 }}</span>
+                            {% endif %}
+                            {% else %}
+                            <span style="font-size:0.76rem;color:var(--muted)">—</span>
+                            {% endif %}
+                        </div>
+                    </td>
+                    <td>
+                        <div class="ch-videos">
+                            <span class="vid-stat"><span class="vid-num">{{ ch.total_videos }}</span> <span class="vid-label">总计</span></span>
+                            {% for st, cnt in ch.video_counts.items() if st in ('new','synced','analyzed') %}
+                            <span class="vid-stat"><span class="vid-num">{{ cnt }}</span> <span class="vid-label">{{ stage_labels.get(st, st) }}</span></span>
+                            {% endfor %}
+                        </div>
+                    </td>
+                    <td class="ch-refresh">{{ ch.last_refreshed_at.strftime('%m-%d %H:%M') if ch.last_refreshed_at else '从未' }}</td>
+                    <td>
+                        <div class="ch-actions">
+                            <a href="/sources/channels/{{ ch.id }}/videos" class="btn btn-primary btn-sm">查看视频</a>
+                            <form method="post" action="/sources/channels/{{ ch.id }}/refresh">
+                                <button type="submit" class="btn btn-secondary btn-sm">刷新</button>
+                            </form>
+                            <button type="button" class="btn btn-ghost btn-sm" onclick="toggleEdit({{ ch.id }})">编辑</button>
+                            <form method="post" action="/sources/channels/{{ ch.id }}/delete"
+                                  onsubmit="return confirm('确定删除频道「{{ ch.name or ch.youtube_channel_id }}」？')">
+                                <button type="submit" class="btn btn-ghost-danger btn-sm">删除</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                <!-- Edit Row -->
+                <tr id="row-edit-{{ ch.id }}" style="display:none">
+                    <td colspan="6" style="background:var(--accent-soft);padding:14px 16px;border-bottom:2px solid var(--accent)">
+                        <form method="post" action="/sources/channels/{{ ch.id }}/edit" class="channel-form-grid" style="padding:0">
+                            <div class="form-group" style="min-width:140px">
+                                <label class="form-label" for="edit_name_{{ ch.id }}">频道名称</label>
+                                <input type="text" id="edit_name_{{ ch.id }}" name="name" class="form-control"
+                                       value="{{ ch.name or ch.youtube_channel_id }}" required>
+                            </div>
+                            <div class="form-group" style="min-width:90px">
+                                <label class="form-label" for="edit_priority_{{ ch.id }}">优先级</label>
+                                <select id="edit_priority_{{ ch.id }}" name="priority" class="form-control">
+                                    <option value="core" {% if ch.priority == 'core' %}selected{% endif %}>核心</option>
+                                    <option value="watch" {% if ch.priority == 'watch' %}selected{% endif %}>关注</option>
+                                    <option value="archive" {% if ch.priority == 'archive' %}selected{% endif %}>归档</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="min-width:180px">
+                                <label class="form-label" for="edit_focus_{{ ch.id }}">关注领域</label>
+                                <input type="text" id="edit_focus_{{ ch.id }}" name="default_focus" class="form-control"
+                                       value="{{ ch.default_focus or '' }}" placeholder="逗号分隔">
+                            </div>
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-primary btn-sm">保存</button>
+                                <button type="button" class="btn btn-ghost btn-sm" onclick="toggleEdit({{ ch.id }})">取消</button>
+                            </div>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="card-body">
+        <div class="empty-state"><p>还没有添加任何频道。使用上方表单添加 YouTube 频道。</p></div>
+    </div>
+    {% endif %}
+</section>
 
-<div style="margin-top:24px;display:flex;gap:8px">
-    <a href="/dashboard" class="btn-action btn-secondary">返回控制台</a>
-    <a href="/content/new" class="btn-action btn-secondary">直接分析视频</a>
+<div style="display:flex;gap:8px">
+    <a href="/dashboard" class="btn btn-secondary">返回控制台</a>
+    <a href="/content/new" class="btn btn-secondary">直接分析视频</a>
 </div>
 
 <script>
 function toggleEdit(channelId) {
-    var displayRow = document.getElementById('row-display-' + channelId);
-    var editRow = document.getElementById('row-edit-' + channelId);
-    if (displayRow.style.display === 'none') {
-        displayRow.style.display = '';
-        editRow.style.display = 'none';
-    } else {
-        displayRow.style.display = 'none';
-        editRow.style.display = '';
-    }
+    var d = document.getElementById('row-display-' + channelId);
+    var e = document.getElementById('row-edit-' + channelId);
+    if (d.style.display === 'none') { d.style.display = ''; e.style.display = 'none'; }
+    else { d.style.display = 'none'; e.style.display = ''; }
 }
 </script>
 

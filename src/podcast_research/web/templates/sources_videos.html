@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ channel.name }} · 研究候选池 — 投资音视频研究助手{% endblock %}
+{% block title %}{{ channel.name }} · 研究候选池{% endblock %}
 {% block content %}
 
 {% if flash_msg %}
@@ -8,191 +8,192 @@
 
 <a href="/sources/channels" class="back-link">&larr; 返回频道管理</a>
 
-<!-- ── Channel Header Card ── -->
-<div class="channel-head">
-    <h2>{{ channel.name or channel.youtube_channel_id }}</h2>
-    <div class="ch-meta">
-        <span class="priority-badge {{ channel.priority }}">{{ priority_labels.get(channel.priority, channel.priority) }}</span>
-        {% if channel.default_focus %}
-        <span>{{ channel.default_focus[:80] }}{% if channel.default_focus|length > 80 %}…{% endif %}</span>
-        {% endif %}
-        {% if channel.url %}
-        <a href="{{ channel.url }}" target="_blank" rel="noopener">YouTube →</a>
-        {% endif %}
+<!-- ── Channel Hero ── -->
+<section class="source-card channel-hero">
+    <div class="card-body">
+        <div class="channel-hero-main">
+            <div class="channel-hero-text">
+                <h1>{{ channel.name or channel.youtube_channel_id }}</h1>
+                <div class="channel-meta-row">
+                    <span class="priority-badge {{ channel.priority }}">{{ priority_labels.get(channel.priority, channel.priority) }}</span>
+                    {% if channel.default_focus %}
+                    <span>{{ channel.default_focus[:80] }}{% if channel.default_focus|length > 80 %}…{% endif %}</span>
+                    {% endif %}
+                    {% if channel.url %}
+                    <a href="{{ channel.url }}" target="_blank" rel="noopener">YouTube →</a>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="channel-actions">
+                <form method="post" action="/sources/channels/{{ channel.id }}/refresh">
+                    <button type="submit" class="btn btn-primary">刷新视频列表</button>
+                </form>
+                <a href="/sources/channels" class="btn btn-secondary">频道列表</a>
+                <a href="/content/new" class="btn btn-ghost">直接分析</a>
+            </div>
+        </div>
     </div>
-    <div class="ch-actions">
-        <form method="post" action="/sources/channels/{{ channel.id }}/refresh" style="display:inline">
-            <button type="submit" class="btn-action">刷新视频列表</button>
-        </form>
-        <a href="/sources/channels" class="btn-action btn-secondary">频道列表</a>
-        <a href="/content/new" class="btn-action btn-secondary">直接分析</a>
-    </div>
-</div>
+</section>
 
-<!-- ── Filter Bar ── -->
-{% set ns = namespace(total=0, n_new=0, n_watchlist=0, n_synced=0, n_analyzed=0, n_processing=0, n_failed=0, n_skipped=0, n_long=0) %}
-{% if videos is defined %}
-  {% set ns.total = videos|length %}
-  {% for v in videos %}
-    {% if v.import_status == 'new' %}{% set ns.n_new = ns.n_new + 1 %}{% endif %}
-    {% if v.watchlist_match and v.watchlist_match.matched %}{% set ns.n_watchlist = ns.n_watchlist + 1 %}{% endif %}
-    {% if v.import_status == 'synced' %}{% set ns.n_synced = ns.n_synced + 1 %}{% endif %}
-    {% if v.import_status == 'analyzed' %}{% set ns.n_analyzed = ns.n_analyzed + 1 %}{% endif %}
-    {% if v.import_status == 'processing' %}{% set ns.n_processing = ns.n_processing + 1 %}{% endif %}
-    {% if v.import_status == 'failed' %}{% set ns.n_failed = ns.n_failed + 1 %}{% endif %}
-    {% if v.import_status == 'skipped' %}{% set ns.n_skipped = ns.n_skipped + 1 %}{% endif %}
-    {% if v.duration_seconds > 5400 %}{% set ns.n_long = ns.n_long + 1 %}{% endif %}
-  {% endfor %}
-{% endif %}
-<div class="filter-bar">
-    <span class="filter-label">筛选</span>
-    <a href="?" class="filter-pill {% if not current_status and not current_watchlist and not current_long %}active{% endif %}">全部</a>
-    <a href="?status=new{% if current_watchlist %}&watchlist_match={{ current_watchlist }}{% endif %}{% if current_long %}&long={{ current_long }}{% endif %}"
-       class="filter-pill {% if current_status == 'new' %}active{% endif %}">新发现</a>
-    <a href="?watchlist_match=1{% if current_status %}&status={{ current_status }}{% endif %}{% if current_long %}&long={{ current_long }}{% endif %}"
-       class="filter-pill watchlist-pill {% if current_watchlist == '1' %}active{% endif %}">⭐ 命中关注</a>
-    <a href="?status=synced{% if current_watchlist %}&watchlist_match={{ current_watchlist }}{% endif %}{% if current_long %}&long={{ current_long }}{% endif %}"
-       class="filter-pill {% if current_status == 'synced' %}active{% endif %}">已同步</a>
-    <a href="?status=analyzed{% if current_watchlist %}&watchlist_match={{ current_watchlist }}{% endif %}{% if current_long %}&long={{ current_long }}{% endif %}"
-       class="filter-pill {% if current_status == 'analyzed' %}active{% endif %}">已生成报告</a>
-    <a href="?status=processing{% if current_watchlist %}&watchlist_match={{ current_watchlist }}{% endif %}{% if current_long %}&long={{ current_long }}{% endif %}"
-       class="filter-pill {% if current_status == 'processing' %}active{% endif %}">整理中</a>
-    <a href="?status=failed{% if current_watchlist %}&watchlist_match={{ current_watchlist }}{% endif %}{% if current_long %}&long={{ current_long }}{% endif %}"
-       class="filter-pill {% if current_status == 'failed' %}active{% endif %}">失败</a>
-    <a href="?status=skipped{% if current_watchlist %}&watchlist_match={{ current_watchlist }}{% endif %}{% if current_long %}&long={{ current_long }}{% endif %}"
-       class="filter-pill {% if current_status == 'skipped' %}active{% endif %}">已跳过</a>
-    <a href="?long=1{% if current_status %}&status={{ current_status }}{% endif %}{% if current_watchlist %}&watchlist_match={{ current_watchlist }}{% endif %}"
-       class="filter-pill {% if current_long == '1' %}active{% endif %}">长视频</a>
-    <span class="filter-stat">
-        共 <strong>{{ ns.total }}</strong> 条
-        {% if ns.n_new %}<span style="color:var(--info)"> · 新 {{ ns.n_new }}</span>{% endif %}
-        {% if ns.n_watchlist %}<span style="color:var(--warning)"> · 命中 {{ ns.n_watchlist }}</span>{% endif %}
-        {% if ns.n_long %}<span> · 长 {{ ns.n_long }}</span>{% endif %}
-    </span>
-</div>
+<!-- ── Filter Card ── -->
+<section class="source-card filter-card">
+    <div class="card-body">
+        <div class="filter-bar">
+            <div class="filter-pills">
+                <a href="?" class="filter-pill {% if not current_status and not current_watchlist and not current_long %}active{% endif %}">全部</a>
+                <a href="?status=new{% if current_watchlist %}&watchlist_match={{ current_watchlist }}{% endif %}{% if current_long %}&long={{ current_long }}{% endif %}"
+                   class="filter-pill {% if current_status == 'new' %}active{% endif %}">新发现</a>
+                <a href="?watchlist_match=1{% if current_status %}&status={{ current_status }}{% endif %}{% if current_long %}&long={{ current_long }}{% endif %}"
+                   class="filter-pill watchlist {% if current_watchlist == '1' %}active{% endif %}">⭐ 命中关注</a>
+                <a href="?status=synced{% if current_watchlist %}&watchlist_match={{ current_watchlist }}{% endif %}{% if current_long %}&long={{ current_long }}{% endif %}"
+                   class="filter-pill {% if current_status == 'synced' %}active{% endif %}">已同步</a>
+                <a href="?status=analyzed{% if current_watchlist %}&watchlist_match={{ current_watchlist }}{% endif %}{% if current_long %}&long={{ current_long }}{% endif %}"
+                   class="filter-pill {% if current_status == 'analyzed' %}active{% endif %}">已生成报告</a>
+                <a href="?status=processing{% if current_watchlist %}&watchlist_match={{ current_watchlist }}{% endif %}{% if current_long %}&long={{ current_long }}{% endif %}"
+                   class="filter-pill {% if current_status == 'processing' %}active{% endif %}">整理中</a>
+                <a href="?status=failed{% if current_watchlist %}&watchlist_match={{ current_watchlist }}{% endif %}{% if current_long %}&long={{ current_long }}{% endif %}"
+                   class="filter-pill {% if current_status == 'failed' %}active{% endif %}">失败</a>
+                <a href="?status=skipped{% if current_watchlist %}&watchlist_match={{ current_watchlist }}{% endif %}{% if current_long %}&long={{ current_long }}{% endif %}"
+                   class="filter-pill {% if current_status == 'skipped' %}active{% endif %}">已跳过</a>
+                <a href="?long=1{% if current_status %}&status={{ current_status }}{% endif %}{% if current_watchlist %}&watchlist_match={{ current_watchlist }}{% endif %}"
+                   class="filter-pill {% if current_long == '1' %}active{% endif %}">长视频</a>
+            </div>
+            <div class="filter-summary">
+                共 <strong>{{ videos|length }}</strong> 条
+                {% set ns = namespace(nn=0, nw=0, nl=0) %}
+                {% for v in videos %}
+                    {% if v.import_status == 'new' %}{% set ns.nn = ns.nn + 1 %}{% endif %}
+                    {% if v.watchlist_match and v.watchlist_match.matched %}{% set ns.nw = ns.nw + 1 %}{% endif %}
+                    {% if v.duration_seconds > 5400 %}{% set ns.nl = ns.nl + 1 %}{% endif %}
+                {% endfor %}
+                {% if ns.nn %}<span> · 新 <strong>{{ ns.nn }}</strong></span>{% endif %}
+                {% if ns.nw %}<span> · 命中 <strong>{{ ns.nw }}</strong></span>{% endif %}
+                {% if ns.nl %}<span> · 长 <strong>{{ ns.nl }}</strong></span>{% endif %}
+            </div>
+        </div>
+    </div>
+</section>
 
 <!-- ── Video List ── -->
 {% if videos %}
-<div class="section-header" style="margin-bottom:12px">
-    <span class="section-count">显示 <strong>{{ videos|length }}</strong> 个视频</span>
-</div>
+<div class="video-list">
 {% for v in videos %}
-<div class="video-item">
-    <!-- Body: title + meta + badges -->
-    <div class="vi-body">
-        <div class="vi-title">{{ v.title or '无标题' }}</div>
-        <div class="vi-meta">
-            <span class="vi-vid">{{ v.video_id }}</span>
+<article class="video-card">
+    <!-- Left: main content -->
+    <div class="video-main">
+        <h3 class="video-title">{{ v.title or '无标题' }}</h3>
+        <div class="video-meta">
+            <span class="meta-vid">{{ v.video_id }}</span>
             {% if v.published_at %}<span>{{ v.published_at }}</span>{% endif %}
             {% if v.duration_seconds > 0 %}
             <span>{{ (v.duration_seconds // 60)|int }}:{{ '%02d' % (v.duration_seconds % 60) }}</span>
             {% endif %}
             {% if v.url %}
-            <a href="{{ v.url }}" target="_blank" rel="noopener" style="font-size:0.7rem">YT</a>
+            <a href="{{ v.url }}" target="_blank" rel="noopener" style="font-size:0.7rem;color:var(--accent)">YT</a>
             {% endif %}
         </div>
-        <div class="vi-badges">
+        <div class="video-badges">
             {% if v.watchlist_match and v.watchlist_match.matched %}
-            <span class="badge badge-watchlist" title="{{ v.watchlist_match.reason }}">⭐ {{ v.watchlist_match.matched_terms[0] }}</span>
+            <span class="info-badge watchlist" title="{{ v.watchlist_match.reason }}">⭐ {{ v.watchlist_match.matched_terms[0] }}</span>
             {% endif %}
             {% if 'recommended' in v.recommendation_badges %}
-            <span class="badge badge-recommend">推荐整理</span>
+            <span class="info-badge recommend">推荐整理</span>
             {% endif %}
             {% if 'long_video' in v.recommendation_badges %}
-            <span class="badge badge-long">长视频 · 预计耗时较长</span>
+            <span class="info-badge long">长视频 · 预计耗时较长</span>
             {% endif %}
         </div>
     </div>
-    <!-- Status + Actions -->
-    <div class="vi-status">
+    <!-- Right: status + actions -->
+    <div class="video-side">
         {% if v.import_status == 'failed' and v.report_id %}
-        <span class="badge badge-failed">{{ stage_labels.get('failed_sync', '同步失败') }}</span>
+        <span class="status-badge status-failed">同步失败</span>
         {% else %}
-        <span class="badge badge-{{ v.import_status }}">{{ stage_labels.get(v.import_status, v.import_status) }}</span>
+        <span class="status-badge status-{{ v.import_status }}">{{ stage_labels.get(v.import_status, v.import_status) }}</span>
         {% endif %}
-        <div class="vi-actions">
+
+        <div class="video-actions">
             {# ── new ── #}
             {% if v.import_status == 'new' %}
-            <form method="post" action="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/import" style="display:inline">
+            <form method="post" action="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/import">
                 <input type="hidden" name="focus" value="{{ channel.default_focus }}">
                 <input type="hidden" name="depth" value="{{ channel.default_depth }}">
                 <input type="hidden" name="flow_mode" value="full">
-                <button type="submit" class="btn-sm btn-sm-ok" style="font-size:0.72rem">整理进知识库</button>
+                <button type="submit" class="btn btn-primary btn-sm">整理进知识库</button>
             </form>
-            <form method="post" action="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/skip" style="display:inline">
-                <button type="submit" class="btn-ghost">跳过</button>
+            <form method="post" action="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/skip">
+                <button type="submit" class="btn btn-ghost btn-sm">跳过</button>
             </form>
 
             {# ── processing ── #}
             {% elif v.import_status == 'processing' %}
             {% if v.active_job_id %}
-            <a href="/tasks/{{ v.active_job_id }}" class="btn-sm" style="font-size:0.72rem">查看进度</a>
+            <a href="/tasks/{{ v.active_job_id }}" class="btn btn-secondary btn-sm">查看进度</a>
             {% else %}
-            <span style="font-size:0.72rem;color:var(--muted)">整理中…</span>
+            <span style="font-size:0.74rem;color:var(--muted)">整理中…</span>
             {% endif %}
 
             {# ── analyzed ── #}
             {% elif v.import_status == 'analyzed' %}
             {% if v.report_id %}
-            <a href="/reports/{{ v.report_id }}" class="btn-sm btn-sm-ok-bg" style="font-size:0.72rem">查看报告</a>
+            <a href="/reports/{{ v.report_id }}" class="btn btn-primary btn-sm">查看报告</a>
             {% endif %}
-            <form method="post" action="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/import" style="display:inline">
+            <form method="post" action="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/import">
                 <input type="hidden" name="focus" value="{{ channel.default_focus }}">
                 <input type="hidden" name="depth" value="{{ channel.default_depth }}">
                 <input type="hidden" name="flow_mode" value="sync">
-                <button type="submit" class="btn-sm" style="font-size:0.72rem">同步</button>
+                <button type="submit" class="btn btn-secondary btn-sm">同步</button>
             </form>
-            <a href="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/rerun" class="btn-ghost">重新整理</a>
+            <a href="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/rerun" class="btn btn-ghost btn-sm">重新整理</a>
 
             {# ── synced ── #}
             {% elif v.import_status == 'synced' %}
             {% if v.report_id %}
-            <a href="/reports/{{ v.report_id }}" class="btn-sm btn-sm-ok-bg" style="font-size:0.72rem">查看报告</a>
+            <a href="/reports/{{ v.report_id }}" class="btn btn-primary btn-sm">查看报告</a>
             {% else %}
-            <a href="/reports" class="btn-sm btn-sm-ok-bg" style="font-size:0.72rem">查看报告</a>
+            <a href="/reports" class="btn btn-primary btn-sm">查看报告</a>
             {% endif %}
-            <a href="/briefs/latest" class="btn-sm" style="font-size:0.72rem">研究摘要</a>
-            <a href="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/rerun" class="btn-ghost">重新整理</a>
+            <a href="/briefs/latest" class="btn btn-secondary btn-sm">研究摘要</a>
+            <a href="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/rerun" class="btn btn-ghost btn-sm">重新整理</a>
 
             {# ── failed + report_id ── #}
             {% elif v.import_status == 'failed' and v.report_id %}
-            <a href="/reports/{{ v.report_id }}" class="btn-sm btn-sm-ok-bg" style="font-size:0.72rem">查看报告</a>
-            <form method="post" action="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/import" style="display:inline">
+            <a href="/reports/{{ v.report_id }}" class="btn btn-primary btn-sm">查看报告</a>
+            <form method="post" action="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/import">
                 <input type="hidden" name="focus" value="{{ channel.default_focus }}">
                 <input type="hidden" name="depth" value="{{ channel.default_depth }}">
                 <input type="hidden" name="flow_mode" value="sync">
-                <button type="submit" class="btn-sm" style="font-size:0.72rem">重试同步</button>
+                <button type="submit" class="btn btn-secondary btn-sm">重试同步</button>
             </form>
             {% if v.last_job_id %}
-            <a href="/tasks/{{ v.last_job_id }}/logs" class="btn-ghost">日志</a>
-            {% endif %}
-            {% if v.failure_reason %}
-            <div style="font-size:0.65rem;color:var(--danger);margin-top:2px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ v.failure_reason[:60] }}</div>
+            <a href="/tasks/{{ v.last_job_id }}/logs" class="btn btn-ghost btn-sm">日志</a>
             {% endif %}
 
             {# ── failed + no report_id ── #}
             {% elif v.import_status == 'failed' %}
-            <form method="post" action="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/import" style="display:inline">
+            <form method="post" action="/sources/channels/{{ channel.id }}/videos/{{ v.video_id }}/import">
                 <input type="hidden" name="focus" value="{{ channel.default_focus }}">
                 <input type="hidden" name="depth" value="{{ channel.default_depth }}">
                 <input type="hidden" name="flow_mode" value="full">
-                <button type="submit" class="btn-sm btn-sm-warn" style="font-size:0.72rem">重试整理</button>
+                <button type="submit" class="btn btn-primary btn-sm">重试整理</button>
             </form>
             {% if v.last_job_id %}
-            <a href="/tasks/{{ v.last_job_id }}/logs" class="btn-ghost">日志</a>
-            {% endif %}
-            {% if v.failure_reason %}
-            <div style="font-size:0.65rem;color:var(--danger);margin-top:2px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ v.failure_reason[:60] }}</div>
+            <a href="/tasks/{{ v.last_job_id }}/logs" class="btn btn-ghost btn-sm">日志</a>
             {% endif %}
 
             {# ── skipped ── #}
             {% elif v.import_status == 'skipped' %}
-            <span style="font-size:0.72rem;color:var(--muted)">已跳过</span>
+            <span style="font-size:0.74rem;color:var(--muted)">已跳过</span>
             {% endif %}
         </div>
+
+        {% if v.import_status == 'failed' and v.failure_reason %}
+        <div class="video-fail-reason">{{ v.failure_reason[:60] }}</div>
+        {% endif %}
     </div>
-</div>
+</article>
 {% endfor %}
+</div>
 {% else %}
 <div class="empty-state">
     <p>{% if current_status or current_watchlist or current_long %}当前筛选条件下没有匹配的视频。{% else %}该频道还没有视频。点击"刷新视频列表"获取最新视频。{% endif %}</p>

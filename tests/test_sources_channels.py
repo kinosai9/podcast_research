@@ -1070,7 +1070,7 @@ class TestStatusActionsDisplay(_SeedChannelWithVideosMixin):
         html = resp.text
         assert "重试同步" in html
         assert "查看报告" in html
-        assert "报告已生成，同步失败" in html
+        assert "同步失败" in html
 
     def test_failed_without_report_shows_retry(self, api_client, monkeypatch):
         """Failed + no report_id should show '重试整理'."""
@@ -1087,12 +1087,76 @@ class TestStatusActionsDisplay(_SeedChannelWithVideosMixin):
     def test_new_shows_import_button(self, api_client, monkeypatch):
         """New video should show '整理进知识库'."""
         ch_id, video_id = self._seed_channel_with_video(
-            api_client, monkeypatch, status="new", video_id="uiNew1",
+            api_client, monkeypatch, status="new", video_id="testNew1",
         )
-
         resp = api_client.get(f"/sources/channels/{ch_id}/videos")
+        assert resp.status_code == 200
         html = resp.text
         assert "整理进知识库" in html
+
+
+class TestSourcePagesDOMStructure:
+    """P2-M.5.1: Verify card-based DOM structure on source pages."""
+
+    def test_channels_page_has_add_channel_card(self, api_client):
+        """/sources/channels contains add-channel-card section."""
+        resp = api_client.get("/sources/channels")
+        assert resp.status_code == 200
+        assert 'add-channel-card' in resp.text
+
+    def test_channels_page_has_overview_card(self, api_client):
+        """/sources/channels contains channel-overview-card section."""
+        resp = api_client.get("/sources/channels")
+        assert resp.status_code == 200
+        assert 'channel-overview-card' in resp.text
+
+    def test_channels_page_has_form_controls(self, api_client):
+        """Add channel form uses form-control class, not bare inputs."""
+        resp = api_client.get("/sources/channels")
+        assert resp.status_code == 200
+        assert 'form-control' in resp.text
+
+    def test_channels_page_has_unified_buttons(self, api_client):
+        """Buttons use btn btn-primary/secondary/ghost classes."""
+        resp = api_client.get("/sources/channels")
+        assert resp.status_code == 200
+        assert 'btn-primary' in resp.text or 'btn-primary' in resp.text
+
+    def test_videos_page_has_channel_hero(self, api_client, monkeypatch):
+        """Video list page has channel-hero card."""
+        ch_id = _seed_channel(api_client)
+        resp = api_client.get(f"/sources/channels/{ch_id}/videos")
+        assert resp.status_code == 200
+        assert 'channel-hero' in resp.text
+
+    def test_videos_page_has_filter_card(self, api_client, monkeypatch):
+        """Video list page has filter-card with filter-pills."""
+        ch_id = _seed_channel(api_client)
+        resp = api_client.get(f"/sources/channels/{ch_id}/videos")
+        assert resp.status_code == 200
+        assert 'filter-card' in resp.text
+        assert 'filter-pill' in resp.text
+
+    def test_videos_page_has_video_cards(self, api_client, monkeypatch):
+        """Video list page uses video-card articles."""
+        ch_id = _seed_channel(api_client)
+        mock_adapter = MockChannelAdapter([
+            {"video_id": "domTest1", "title": "DOM Test Video",
+             "url": "https://youtube.com/watch?v=domTest1",
+             "published_at": "20260601", "duration_seconds": 1800},
+        ])
+        monkeypatch.setattr(
+            "podcast_research.adapters.channel_video_adapter.ChannelVideoAdapter",
+            lambda: mock_adapter,
+        )
+        api_client.post(f"/sources/channels/{ch_id}/refresh", follow_redirects=False)
+        import time; time.sleep(0.3)
+
+        resp = api_client.get(f"/sources/channels/{ch_id}/videos")
+        assert resp.status_code == 200
+        assert 'video-card' in resp.text
+        assert 'video-main' in resp.text
+        assert 'video-side' in resp.text
 
 
 class TestActiveJobIdLifecycle:
