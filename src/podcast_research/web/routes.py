@@ -892,11 +892,23 @@ def page_tasks(request: Request):
 
 @router.get("/tasks/{job_id}")
 def page_task_detail(request: Request, job_id: str):
-    """Unified task detail page — renders task progress UI."""
-    from podcast_research.services.job_service import get_job
+    """Unified task detail page — renders task progress UI.
+
+    P2-O.2.1: Passes get_job_status() so server-rendered terminal states
+    have failure_kind, error_summary, completed_steps, and pending_steps.
+    """
+    import json as _json
+
+    from podcast_research.services.job_service import get_job, get_job_status
     job = get_job(job_id)
-    ctx = {"request": request, "job_id": job_id, "job": job,
-           "not_found": job is None}
+    status_data = get_job_status(job_id) if job else None
+    ctx = {
+        "request": request,
+        "job_id": job_id,
+        "job": job,
+        "not_found": job is None,
+        "status_json": _json.dumps(status_data, ensure_ascii=False) if status_data else "null",
+    }
     ctx.update(_flash(request))
     return _render("task_detail.html", ctx)
 
@@ -924,7 +936,7 @@ def page_task_logs(request: Request, job_id: str):
         return _render("task_logs.html", {
             "request": request, "not_found": True, "job_id": job_id,
             "job": None, "status": {}, "events": [],
-        })
+        }, status_code=404)
 
     status = get_job_status(job_id) or {}
 

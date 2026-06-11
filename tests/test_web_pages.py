@@ -1882,9 +1882,9 @@ class TestFailureUX:
         assert "fetching" in resp.text or "事件时间线" in resp.text
 
     def test_logs_page_not_found_for_unknown_job(self, api_client):
-        """Unknown job id shows not_found page."""
+        """Unknown job id returns 404 not_found page."""
         resp = api_client.get("/tasks/nonexistent_job_123/logs")
-        assert resp.status_code == 200
+        assert resp.status_code == 404
         assert "不存在" in resp.text or "已过期" in resp.text
 
 

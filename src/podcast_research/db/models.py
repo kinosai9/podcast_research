@@ -141,3 +141,46 @@ class ChannelVideo(Base):
     active_job_id: Mapped[str | None] = mapped_column(String(20), nullable=True)  # P2-M.2
     last_job_id: Mapped[str | None] = mapped_column(String(20), nullable=True)  # P2-M.4.1
     added_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class Job(Base):
+    """P2-O.2: Persisted background job record (analysis / sync / full_flow / channel_refresh)."""
+
+    __tablename__ = "jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(20), nullable=False, unique=True, index=True)
+    job_type: Mapped[str] = mapped_column(String(20), default="analysis")
+    status: Mapped[str] = mapped_column(String(20), default="queued")
+    stage: Mapped[str] = mapped_column(String(50), default="queued")
+    title: Mapped[str] = mapped_column(String(200), default="")
+    source_url: Mapped[str] = mapped_column(String(500), default="")
+    youtube_url: Mapped[str] = mapped_column(String(500), default="")
+    focus_areas: Mapped[str] = mapped_column(Text, default="[]")
+    depth: Mapped[str] = mapped_column(String(20), default="standard")
+    mock: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_sync: Mapped[bool] = mapped_column(Boolean, default=False)
+    report_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_kind: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(20), default="")
+    source_channel_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    video_id: Mapped[str] = mapped_column(String(50), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class JobEvent(Base):
+    """P2-O.2: Persisted job event log (timeline / failure diagnosis)."""
+
+    __tablename__ = "job_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    level: Mapped[str] = mapped_column(String(10), default="info")  # info / warning / error
+    stage: Mapped[str] = mapped_column(String(50), default="")
+    message: Mapped[str] = mapped_column(String(500), default="")
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)

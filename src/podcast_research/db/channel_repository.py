@@ -352,6 +352,9 @@ def list_channel_videos(
             "duration_seconds": cv.duration_seconds,
             "status": cv.status,
             "report_id": cv.report_id,
+            "failure_reason": cv.failure_reason,
+            "active_job_id": cv.active_job_id,
+            "last_job_id": cv.last_job_id,
             "added_at": cv.added_at,
         })
     return results
@@ -403,6 +406,8 @@ def get_channel_video_by_video_id(session: Session, video_id: str) -> dict | Non
         "status": cv.status,
         "report_id": cv.report_id,
         "channel_id": ch.id,
+        "last_job_id": cv.last_job_id,
+        "failure_reason": cv.failure_reason,
     }
 
 
@@ -421,4 +426,6 @@ def get_video(session: Session, video_id: str) -> dict | None:
         "duration_seconds": cv.duration_seconds,
         "status": cv.status,
         "report_id": cv.report_id,
+        "failure_reason": cv.failure_reason,
+        "last_job_id": cv.last_job_id,
     }

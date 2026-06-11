@@ -1,6 +1,8 @@
-"""P2-K.2.1: Unified in-memory job service — analysis, sync, and future task types.
+"""P2-K.2.1 / P2-O.2: Hybrid job service — in-memory active + DB persisted.
 
-Local single-user tool. Jobs lost on restart. Max 50 jobs.
+Active jobs tracked in memory for heartbeat/live-status.
+All job creates/updates/events persisted to DB for history and log access.
+On restart, historical jobs readable from DB even if in-memory is gone.
 
 Status lifecycle:
     queued → running → long_running → success
@@ -12,12 +14,16 @@ Heartbeat thresholds are module-level for easy monkeypatching in tests.
 
 from __future__ import annotations
 
+import json
+import logging
 import threading
 import time as _time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable
+
+_log = logging.getLogger(__name__)
 
 _MAX_JOBS = 50
 
@@ -186,6 +192,7 @@ def create_job(
     with _lock:
         _JOBS[job_id] = job
         _prune_if_needed()
+    _persist_job(job)  # P2-O.2: persist on create
     return job
 
 
@@ -204,6 +211,7 @@ def create_sync_job(report_id: int) -> AnalysisJob:
     with _lock:
         _JOBS[job_id] = job
         _prune_if_needed()
+    _persist_job(job)  # P2-O.2: persist on create
     return job
 
 
@@ -215,14 +223,69 @@ def _prune_if_needed() -> None:
 
 
 def get_job(job_id: str) -> AnalysisJob | None:
-    return _JOBS.get(job_id)
+    """Get job from in-memory store, falling back to DB persistence.
+
+    P2-O.2: If job is not in memory (e.g. after server restart), reads from DB.
+    """
+    job = _JOBS.get(job_id)
+    if job is not None:
+        return job
+    return _get_job_from_db(job_id)
 
 
 def list_jobs(limit: int = 20) -> list[AnalysisJob]:
-    """Return recent jobs for the unified task list page."""
+    """Return recent jobs for the unified task list page.
+
+    P2-O.2: Merges in-memory active jobs with DB-persisted terminal jobs.
+    In-memory jobs take precedence (newer state for active/queued).
+    """
+    mem_jobs: dict[str, AnalysisJob] = {}
     with _lock:
-        jobs = sorted(_JOBS.values(), key=lambda j: j.created_at, reverse=True)
-        return jobs[:limit]
+        mem_jobs = dict(_JOBS)
+
+    # Get DB jobs
+    db_jobs: dict[str, AnalysisJob] = {}
+    try:
+        from podcast_research.db.models import Job as JobORM
+        from podcast_research.db.session import get_session
+
+        session = get_session()
+        try:
+            rows = session.query(JobORM).order_by(JobORM.created_at.desc()).limit(limit * 2).all()
+            for row in rows:
+                if row.job_id not in mem_jobs:
+                    db_jobs[row.job_id] = _orm_to_dataclass(row)
+        finally:
+            session.close()
+    except Exception:
+        _log.warning("Failed to list jobs from DB", exc_info=True)
+
+    # Merge: in-memory first (active/live), then DB (historical)
+    merged = list(mem_jobs.values())
+    for jid, job in db_jobs.items():
+        if jid not in mem_jobs:
+            merged.append(job)
+
+    merged.sort(key=lambda j: j.created_at, reverse=True)
+    return merged[:limit]
+
+
+def _get_job_from_db(job_id: str) -> AnalysisJob | None:
+    """Load a job from DB persistence."""
+    try:
+        from podcast_research.db.models import Job as JobORM
+        from podcast_research.db.session import get_session
+
+        session = get_session()
+        try:
+            row = session.query(JobORM).filter_by(job_id=job_id).first()
+            if row:
+                return _orm_to_dataclass(row)
+        finally:
+            session.close()
+    except Exception:
+        _log.warning("Failed to load job %s from DB", job_id, exc_info=True)
+    return None
 
 
 def count_active_jobs() -> int:
@@ -287,6 +350,9 @@ def update_job(
         elif stage_changed:
             _add_event(job, event_level or "info", job.stage, message or _stage_message(job.stage), event_detail)
 
+        # P2-O.2: Persist job state to DB on every update
+        _persist_job(job)
+
 
 def _stage_message(stage: str) -> str:
     return _ALL_STAGES.get(stage, stage)
@@ -299,15 +365,215 @@ def _add_event(
     message: str,
     detail: str | None = None,
 ) -> None:
-    """Record a JobEvent on the job for timeline / failure diagnosis."""
+    """Record a JobEvent on the job for timeline / failure diagnosis.
+
+    P2-O.2: Also persists event to DB.
+    """
+    ts = _now_iso()
     event = JobEvent(
-        timestamp=_now_iso(),
+        timestamp=ts,
         level=level,
         stage=stage,
         message=message,
         detail=detail,
     )
     job.events.append(event)
+    _persist_event(job.job_id, ts, level, stage, message, detail)
+
+
+# ── P2-O.2: DB Persistence Layer ──────────────────────────────────────
+
+
+def _persist_job(job: AnalysisJob) -> None:
+    """Insert or update a Job row in the database."""
+    try:
+        from podcast_research.db.models import Job as JobORM
+        from podcast_research.db.session import get_session
+
+        session = get_session()
+        try:
+            existing = session.query(JobORM).filter_by(job_id=job.job_id).first()
+            if existing:
+                _update_job_orm(existing, job)
+            else:
+                session.add(_job_to_orm(job))
+            session.commit()
+        finally:
+            session.close()
+    except Exception:
+        _log.warning("Failed to persist job %s to DB", job.job_id, exc_info=True)
+
+
+def _persist_event(
+    job_id: str,
+    timestamp: str,
+    level: str,
+    stage: str,
+    message: str,
+    detail: str | None,
+) -> None:
+    """Insert a JobEvent row in the database."""
+    try:
+        from podcast_research.db.models import JobEvent as JobEventORM
+        from podcast_research.db.session import get_session
+
+        session = get_session()
+        try:
+            evt = JobEventORM(
+                job_id=job_id,
+                timestamp=datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S"),
+                level=level,
+                stage=stage,
+                message=message[:500],
+                detail=detail,
+            )
+            session.add(evt)
+            session.commit()
+        finally:
+            session.close()
+    except Exception:
+        _log.warning("Failed to persist event for job %s", job_id, exc_info=True)
+
+
+def _job_to_orm(job: AnalysisJob):
+    """Convert in-memory AnalysisJob to ORM Job instance."""
+    from podcast_research.db.models import Job as JobORM
+
+    return JobORM(
+        job_id=job.job_id,
+        job_type=job.job_type,
+        status=job.status,
+        stage=job.stage,
+        title=job.title,
+        source_url=job.source_url,
+        youtube_url=job.youtube_url,
+        focus_areas=json.dumps(job.focus_areas, ensure_ascii=False),
+        depth=job.depth,
+        mock=job.mock,
+        auto_sync=job.auto_sync,
+        report_id=job.report_id,
+        error=job.error,
+        source_type=job.source_type,
+        source_channel_id=job.source_channel_id,
+        video_id=job.video_id,
+        created_at=_parse_dt(job.created_at) or datetime.now(),
+        started_at=_parse_dt(job.started_at),
+        completed_at=datetime.now() if job.status in ("success", "failed") else None,
+    )
+
+
+def _update_job_orm(orm, job: AnalysisJob) -> None:
+    """Update an existing ORM Job row from in-memory job."""
+    orm.status = job.status
+    orm.stage = job.stage
+    orm.title = job.title or orm.title
+    orm.report_id = job.report_id
+    orm.error = job.error
+    orm.failure_kind = _compute_failure_kind(job) if job.status == "failed" else None
+    orm.error_summary = _error_summary_for(job)
+    if job.status in ("success", "failed"):
+        orm.completed_at = datetime.now()
+
+
+def _orm_to_dataclass(orm) -> AnalysisJob:
+    """Convert ORM Job to in-memory AnalysisJob dataclass.
+
+    Reconstructs events from DB job_events table.
+    """
+    job = AnalysisJob(
+        job_id=orm.job_id,
+        job_type=orm.job_type,
+        status=orm.status,
+        stage=orm.stage,
+        title=orm.title or "",
+        source_url=orm.source_url or "",
+        youtube_url=orm.youtube_url or "",
+        focus_areas=_parse_focus_areas(orm.focus_areas),
+        depth=orm.depth or "standard",
+        mock=bool(orm.mock),
+        auto_sync=bool(orm.auto_sync),
+        report_id=orm.report_id,
+        error=orm.error,
+        source_type=orm.source_type or "",
+        source_channel_id=orm.source_channel_id,
+        video_id=orm.video_id or "",
+        created_at=_fmt_dt(orm.created_at) or _now_iso(),
+        started_at=_fmt_dt(orm.started_at) or "",
+    )
+    # Load events from DB
+    try:
+        from podcast_research.db.models import JobEvent as JobEventORM
+        from podcast_research.db.session import get_session
+
+        session = get_session()
+        try:
+            rows = (
+                session.query(JobEventORM)
+                .filter_by(job_id=orm.job_id)
+                .order_by(JobEventORM.timestamp.asc())
+                .all()
+            )
+            for row in rows:
+                job.events.append(
+                    JobEvent(
+                        timestamp=_fmt_dt(row.timestamp) or "",
+                        level=row.level or "info",
+                        stage=row.stage or "",
+                        message=row.message or "",
+                        detail=row.detail,
+                    )
+                )
+        finally:
+            session.close()
+    except Exception:
+        _log.warning("Failed to load events for job %s", orm.job_id, exc_info=True)
+
+    return job
+
+
+def _parse_focus_areas(raw: str | None) -> list[str]:
+    """Parse focus_areas JSON string to list."""
+    if not raw:
+        return []
+    try:
+        val = json.loads(raw)
+        return val if isinstance(val, list) else []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def _parse_dt(s: str | None) -> datetime | None:
+    """Parse ISO datetime string."""
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None
+
+
+def _fmt_dt(dt: datetime | None) -> str:
+    """Format datetime to ISO string."""
+    if dt is None:
+        return ""
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _error_summary_for(job: AnalysisJob) -> str | None:
+    """Compute a user-facing error summary for persistence."""
+    if job.status != "failed":
+        return None
+    fk = _compute_failure_kind(job)
+    messages = {
+        "transcript_failed": "无法获取视频字幕",
+        "analysis_failed": "AI 分析未完成",
+        "report_failed": "报告生成失败",
+        "sync_failed_after_report": "报告已生成，但知识库同步失败",
+        "sync_failed": "知识库同步失败",
+        "rerun_failed": "重新整理失败",
+        "channel_refresh_failed": "频道视频列表刷新失败",
+    }
+    return messages.get(fk, "整理失败")
 
 
 def _check_heartbeat(job: AnalysisJob, now: float) -> str:
@@ -366,31 +632,50 @@ def _build_can_leave(job: AnalysisJob, now: float) -> bool:
 def _compute_failure_kind(job: AnalysisJob) -> str:
     """Determine the failure category for UX display.
 
+    Uses events to find the last real stage before failure (since job.stage
+    gets overwritten to "failed" on error).
+
     Returns one of:
         transcript_failed — before transcript fetch, no report_id
         analysis_failed — transcript fetched, no report_id, failed in analysis
         report_failed — failed during report saving, no report_id
         sync_failed_after_report — report_id exists, failed during sync
+        sync_failed — sync-only job failed, report_id may or may not exist
         rerun_failed — job is a rerun/full_flow with "重新整理" in title
+        channel_refresh_failed — channel_refresh job failed
         unknown — fallback
     """
     is_rerun = "重新整理" in (job.title or "")
 
+    # Channel refresh failures
+    if job.job_type == "channel_refresh":
+        return "channel_refresh_failed"
+
+    # Sync-only job failures (no analysis phase)
+    if job.job_type == "sync":
+        return "sync_failed"
+
     if job.report_id:
-        # Report exists → sync must have failed
         if is_rerun:
             return "rerun_failed"
         return "sync_failed_after_report"
 
+    # Find the last real stage before failure from events
+    stage = job.stage
+    if stage == "failed":
+        for evt in reversed(job.events):
+            if evt.stage and evt.stage != "failed":
+                stage = evt.stage
+                break
+
     # No report_id → analysis phase failed
-    # Check which stage we got to
-    if job.stage in ("queued", "fetching_transcript", ""):
+    if stage in ("queued", "fetching_transcript", ""):
         return "transcript_failed"
 
-    if job.stage in ("cleaning", "analyzing", "analyzing_chunk"):
+    if stage in ("cleaning", "analyzing", "analyzing_chunk"):
         return "analysis_failed"
 
-    if job.stage in ("saving", "saving_report"):
+    if stage in ("saving", "saving_report"):
         return "report_failed"
 
     if is_rerun:
@@ -574,7 +859,9 @@ def get_job_status(job_id: str) -> dict[str, Any] | None:
             "analysis_failed": ("AI 分析未完成", f"分析在「{_stage_message(job.stage)}」阶段失败。"),
             "report_failed": ("报告生成失败", "报告保存阶段失败。"),
             "sync_failed_after_report": ("报告已生成，但知识库同步失败", job.error or "同步过程中遇到错误。"),
+            "sync_failed": ("知识库同步失败", job.error or "同步过程中遇到错误。"),
             "rerun_failed": ("重新整理失败，旧版本已保留", job.error or "重新整理过程中遇到错误。"),
+            "channel_refresh_failed": ("频道视频列表刷新失败", job.error or "获取频道视频列表时出错。"),
         }
         msg_info = _FAILURE_MESSAGES.get(failure_kind, ("整理失败", "请稍后重试。"))
         error_summary, error_detail = msg_info
@@ -584,6 +871,14 @@ def get_job_status(job_id: str) -> dict[str, Any] | None:
         if failure_kind == "sync_failed_after_report":
             result_links["report"] = f"/reports/{job.report_id}"
             result_links["retry_sync"] = f"/reports/{job.report_id}/sync"
+        elif failure_kind == "sync_failed":
+            if job.report_id:
+                result_links["report"] = f"/reports/{job.report_id}"
+                result_links["retry_sync"] = f"/reports/{job.report_id}/sync"
+            result_links["retry"] = f"/tasks/{job.job_id}"
+        elif failure_kind == "channel_refresh_failed":
+            if job.source_channel_id:
+                result_links["retry"] = f"/sources/channels/{job.source_channel_id}/videos"
         elif failure_kind == "rerun_failed" or failure_kind in ("transcript_failed", "analysis_failed", "report_failed"):
             result_links["retry"] = f"/tasks/{job.job_id}"
 
@@ -992,6 +1287,7 @@ def create_channel_refresh_job(
     with _lock:
         _JOBS[job_id] = job
         _prune_if_needed()
+    _persist_job(job)  # P2-O.2: persist on create
     return job
 
 

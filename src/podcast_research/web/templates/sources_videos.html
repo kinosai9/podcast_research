@@ -166,7 +166,7 @@
                 <button type="submit" class="btn btn-secondary btn-sm">重试同步</button>
             </form>
             {% if v.last_job_id %}
-            <a href="/tasks/{{ v.last_job_id }}/logs" class="btn btn-ghost btn-sm">日志</a>
+            <a href="/tasks/{{ v.last_job_id }}/logs" class="btn btn-ghost btn-sm">查看日志</a>
             {% endif %}
 
             {# ── failed + no report_id ── #}
@@ -178,7 +178,7 @@
                 <button type="submit" class="btn btn-primary btn-sm">重试整理</button>
             </form>
             {% if v.last_job_id %}
-            <a href="/tasks/{{ v.last_job_id }}/logs" class="btn btn-ghost btn-sm">日志</a>
+            <a href="/tasks/{{ v.last_job_id }}/logs" class="btn btn-ghost btn-sm">查看日志</a>
             {% endif %}
 
             {# ── skipped ── #}
