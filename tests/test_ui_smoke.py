@@ -12,9 +12,19 @@ import time
 
 import pytest
 import uvicorn
-from playwright.sync_api import sync_playwright
+
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
 
 from podcast_research.api.app import create_app
+
+pytestmark = pytest.mark.skipif(
+    not PLAYWRIGHT_AVAILABLE,
+    reason="playwright not installed (pip install playwright && playwright install chromium)",
+)
 
 SERVER_PORT = 18766
 BASE_URL = f"http://127.0.0.1:{SERVER_PORT}"
