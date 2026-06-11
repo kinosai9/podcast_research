@@ -1,5 +1,7 @@
 """GET /api/reports/*, /api/entities, /api/targets, /api/sources 测试。"""
 
+import re
+
 
 def test_api_reports_list(api_client, seeded_db) -> None:
     response = api_client.get("/api/reports")
@@ -155,6 +157,8 @@ def test_serve_command_help() -> None:
     runner = CliRunner()
     result = runner.invoke(app, ["serve", "--help"])
     assert result.exit_code == 0
-    assert "启动" in result.output
-    assert "--host" in result.output
-    assert "--port" in result.output
+    # Strip Rich ANSI escape codes (present on Linux, absent on Windows)
+    output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "启动" in output
+    assert "--host" in output
+    assert "--port" in output
