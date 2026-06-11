@@ -385,10 +385,17 @@ def _add_event(
 
 
 def _persist_job(job: AnalysisJob) -> None:
-    """Insert or update a Job row in the database."""
+    """Insert or update a Job row in the database.
+
+    Safe: skips silently if DB engine is not initialized (e.g. in tests
+    that don't use db_session fixture and haven't monkeypatched DB_PATH).
+    """
     try:
         from podcast_research.db.models import Job as JobORM
-        from podcast_research.db.session import get_session
+        from podcast_research.db.session import _engine, _SessionLocal, get_session
+
+        if _engine is None and _SessionLocal is None:
+            return  # DB not initialized, skip persistence
 
         session = get_session()
         try:
@@ -412,10 +419,16 @@ def _persist_event(
     message: str,
     detail: str | None,
 ) -> None:
-    """Insert a JobEvent row in the database."""
+    """Insert a JobEvent row in the database.
+
+    Safe: skips silently if DB engine is not initialized.
+    """
     try:
         from podcast_research.db.models import JobEvent as JobEventORM
-        from podcast_research.db.session import get_session
+        from podcast_research.db.session import _engine, _SessionLocal, get_session
+
+        if _engine is None and _SessionLocal is None:
+            return  # DB not initialized, skip persistence
 
         session = get_session()
         try:
