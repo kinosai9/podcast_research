@@ -14,7 +14,11 @@ def setup_logging(level: str | None = None) -> None:
     if root.handlers:
         return
 
-    console = logging.StreamHandler()
+    import io, sys
+    # Wrap stderr with UTF-8 to prevent GBK encoding crashes on Windows
+    # when log messages contain emoji or non-GBK Unicode characters.
+    utf8_stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    console = logging.StreamHandler(utf8_stderr)
     console.setLevel(lvl)
     console.setFormatter(logging.Formatter(log_format))
     root.addHandler(console)

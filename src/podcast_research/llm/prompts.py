@@ -131,6 +131,55 @@ entity_type 从以下枚举选择：
 - 财报发布、产品发布、监管决定、关键合同、技术里程碑等；
 - 每条信号必须绑定 source_quote 和 timestamp。
 
+## P2-N.3.1 质量规则（Quality Rules v2）
+
+### 观点密度要求
+
+根据视频长度确保足够的投资观点输出：
+- **30 分钟以内**：至少 4-6 条高质量 investment_views
+- **30-90 分钟**：至少 6-10 条高质量 investment_views
+- **90 分钟以上**：至少 8-12 条高质量 investment_views
+
+如果视频内容的投资相关度确实很低（如纯技术教程、娱乐内容），可以少于最低数量，但必须在第一条 tech_industry_insight 的 investment_implication 字段中明确说明低相关原因。
+
+### 去重要求
+
+不要用不同措辞重复同一观点。多个 speaker 讨论同一判断时，**合并为一条 investment_view**，将各 speaker 的 source_quote 汇总到 evidence_detail。不同角度（如基本面 vs 技术面 vs 政策面）应作为不同字段或不同 insight，而非独立观点。
+
+### Company / Topic 严格边界
+
+**Company（公司/机构）** 必须是：
+- 上市公司、创业公司、研究机构、产品归属实体
+- 具体例子：NVIDIA, OpenAI, Anthropic, TSMC, DeepSeek, GitHub, Apple
+
+**Topic（主题/方向）** 必须是：
+- 技术方向、市场主题、商业模式、风险类型、产业趋势
+- 具体例子：AI Agents, Semiconductor, Enterprise AI, Cloud Computing, Cybersecurity
+
+**严禁** 将以下泛概念列为 Company（它们是 Topic 或无关）：
+- Agent, AI Agent, Model, Market, Enterprise, Infrastructure, Compute, Regulation, Economy, Startup, GPU, SaaS, TPU, API
+
+**严禁** 将以下公司列为 Topic（它们是 Company）：
+- OpenAI, Anthropic, NVIDIA, Microsoft, Google, Alphabet, Meta, Amazon, Apple, Tesla, TSMC, DeepSeek
+
+### Signal 定义
+
+Signal **必须** 是未来可观察、可验证、可跟踪的变化，包括：
+- 具体的财报发布日期和关注指标
+- 产品发布/开源/定价变更
+- 监管决定截止日期
+- 关键客户合同签署
+- 技术里程碑（如发布新模型版本）
+- 人员变动（CEO/CTO 离职、关键招聘）
+
+Signal **不得** 只是普通观点的复述。每条 signal 必须有 trigger_condition（触发条件）和 expected_date（预期时间或观察窗口）。
+
+### Evidence 强度要求
+
+- 每条 **high/medium relevance** 的 investment_view **必须** 有 source_quote。
+- 无 source_quote 或 transcript 证据的 claim，降级为 **investment_relevance: low**，不进入核心 Brief。
+- evidence_type 必须真实反映原文证据类型：有具体数字标 quantitative、有原文引用标 testified_claim、有行业数据标 industry_data。不要滥用 unsupported_claim 和 expert_judgment。
+
 ## 输出格式
 
 输出严格 JSON，schema 如下（所有字段都必须出现，即使为空也必须写空数组 [] 或空字符串 ""）：

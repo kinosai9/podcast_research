@@ -1470,11 +1470,31 @@ def _normalize_topic_name(raw: str) -> str:
 
 
 def _normalize_company_name(raw: str) -> str:
-    """Normalize a company name using alias map."""
+    """Normalize a company name using alias map + suffix stripping.
+
+    Handles common variations: "8090 Inc." → "8090", "OpenAI Inc." → "OpenAI".
+    """
     key = raw.lower().strip()
     if key in _COMPANY_NAME_MAP:
         return _COMPANY_NAME_MAP[key]
-    # Default: return as-is
+
+    # Strip common corporate suffixes for normalization
+    suffixes = [
+        " inc.", " inc", " corp.", " corp", " corporation",
+        " llc", " l.l.c.", " ltd.", " ltd", " limited",
+        " co.", " co", " plc", " gmbh", " s.a.", " s.a",
+        " ag", " b.v.", " n.v.", " k.k.",
+        " pte. ltd.", " pte ltd",
+    ]
+    name = raw.strip()
+    for suffix in suffixes:
+        if name.lower().endswith(suffix):
+            stripped = name[: -len(suffix)].strip()
+            # Don't strip single-letter leftovers (e.g., "A Inc." → "A" is noise)
+            if len(stripped) >= 2:
+                return stripped
+            break
+
     return raw
 
 
@@ -2077,6 +2097,12 @@ _TOPIC_PATTERNS = [
     # Product/model names that aren't companies
     "chatgpt", "gpt-5", "gpt-4", "claude", "codex", "cicd",
     "apple silicon", "macbook", "m5 max", "mac os",
+    # Model size / technology descriptors that aren't companies
+    "reasoning model", "language model", "foundation model",
+    "vision model", "world model", "speech model", "embedding model",
+    "reward model", "diffusion model", "multimodal model",
+    "training cluster", "inference cluster", "gpu cluster",
+    "open source model", "proprietary model",
     # Person names that aren't companies
     "alex lubyansky", "ben gilbert", "david rosenthal",
     "hamilton helmer", "ivan burin", "mark chen", "michael lewis",
@@ -2414,6 +2440,30 @@ def cleanup_cards(
             shutil.move(str(old_path), str(dest))
             merged += 1
 
+    # 3.5 P2-N.1: Merge company suffix duplicates (8090 Inc. → 8090)
+    suffix_merged = 0
+    if do_companies and apply:
+        companies_dir = vault_path / "03_Companies"
+        if companies_dir.exists():
+            company_files = sorted(companies_dir.glob("*.md"))
+            normalized_map: dict[str, Path] = {}
+            for cf in company_files:
+                norm = _normalize_company_name(cf.stem).lower()
+                if norm in normalized_map:
+                    # Merge into canonical (first seen)
+                    canonical = normalized_map[norm]
+                    dup_sources = _extract_source_reports_from_card(cf)
+                    if dup_sources:
+                        _append_source_reports(canonical, dup_sources)
+                    # Backup duplicate
+                    dest = backup_dir / f"company_suffix_{cf.name}"
+                    if dest.exists():
+                        dest = backup_dir / f"company_suffix_{cf.stem}_bak{cf.suffix}"
+                    shutil.move(str(cf), str(dest))
+                    suffix_merged += 1
+                else:
+                    normalized_map[norm] = cf
+
     # 4. Update indexes
     # Re-scan to get current state after cleanup
     if do_topics:
@@ -2446,6 +2496,7 @@ def cleanup_cards(
         "merged": merged,
         "kept": kept,
         "manual_review": manual_review,
+        "suffix_merged": suffix_merged,
     }
 
 
@@ -2803,6 +2854,9 @@ def consolidate_topics(
             "long_tail_count": long_tail_count,
             "manual_review_count": manual_review_count,
             "merged_count": merged_count,
+            "topic_to_company_count": sum(
+                1 for r in results if r["name"].lower() in _COMPANY_WHITELIST
+            ),
         }
 
     if not apply:
@@ -2813,6 +2867,7 @@ def consolidate_topics(
             "long_tail_count": 0,
             "manual_review_count": 0,
             "merged_count": 0,
+            "topic_to_company_count": 0,
         }
 
     # 4. Apply consolidation
@@ -2965,6 +3020,36 @@ def consolidate_topics(
     # 7. Log consolidation
     _consolidation_log(vault_path, results, merged_count)
 
+    # 8. P2-N.1: Topic→Company cross-migration
+    #    If a Topic card name matches the company whitelist, migrate it.
+    topic_to_company_count = 0
+    if apply:
+        companies_dir = vault_path / "03_Companies"
+        companies_dir.mkdir(parents=True, exist_ok=True)
+        for r in results:
+            topic_name = r["name"]
+            if topic_name.lower() in _COMPANY_WHITELIST:
+                old_path = r["path"]
+                if not old_path.exists():
+                    continue
+                # Read topic card content
+                old_content = read_text_safe(old_path)
+                source_reports = _extract_source_reports_from_card(old_path)
+                # Write or update company card
+                company_path = companies_dir / f"{topic_name}.md"
+                if not company_path.exists():
+                    _write_company_card(company_path, topic_name, [])
+                if source_reports:
+                    _append_source_reports(company_path, source_reports)
+                # Move old topic card to backup
+                backup_name = f"topic_to_company_{old_path.name}"
+                backup_path = backup_dir / backup_name
+                try:
+                    old_path.rename(backup_path)
+                except (OSError, FileExistsError):
+                    pass
+                topic_to_company_count += 1
+
     # Count by status
     core_count = sum(1 for r in results if r["status"] == "core")
     emerging_count = sum(1 for r in results if r["status"] == "emerging")
@@ -2978,6 +3063,7 @@ def consolidate_topics(
         "long_tail_count": long_tail_count,
         "manual_review_count": manual_review_count,
         "merged_count": merged_count,
+        "topic_to_company_count": topic_to_company_count,
     }
 
 

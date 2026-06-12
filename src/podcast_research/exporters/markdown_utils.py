@@ -7,11 +7,27 @@ from collections import OrderedDict
 
 # Windows 非法文件名字符
 _FILENAME_ILLEGAL = re.compile(r'[\\/:*?"<>|]')
+# Emoji and other symbols that cause GBK encoding issues on Windows
+_NON_FILENAME_SAFE = re.compile(
+    r'[\U0001F300-\U0001F9FF'  # Emoticons, symbols, pictograms
+    r'\U00002600-\U000027BF'   # Misc symbols (includes ⚡ U+26A1)
+    r'\U0001F000-\U0001F02F'   # Mahjong, domino
+    r'\U0001F0A0-\U0001F0FF'   # Playing cards
+    r'\U0001F100-\U0001F64F'   # Enclosed, emoticons
+    r'\U0001F680-\U0001F6FF'   # Transport
+    r'\U0001F900-\U0001F9FF'   # Supplemental symbols
+    r'☀-➿'           # Misc symbols
+    r'⭐⭕'            # Stars
+    r'〰〽'            # Wavy dash
+    r'️'                  # Variation selector-16 (emoji presentation)
+    r']+'
+)
 
 
 def sanitize_filename(name: str) -> str:
-    """清理 Windows 非法字符，限制长度。"""
+    """清理 Windows 非法字符和 emoji，限制长度。"""
     sanitized = _FILENAME_ILLEGAL.sub("-", name)
+    sanitized = _NON_FILENAME_SAFE.sub("", sanitized)
     # Collapse multiple hyphens/spaces
     sanitized = re.sub(r"-{2,}", "-", sanitized)
     sanitized = re.sub(r"\s+", " ", sanitized).strip()

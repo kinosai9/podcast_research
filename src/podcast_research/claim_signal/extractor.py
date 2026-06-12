@@ -79,6 +79,35 @@ class SignalCandidate:
             self.slug = _make_slug(self.statement)
 
 
+# Maximum claim statement length before truncation
+_MAX_CLAIM_LENGTH = 200
+
+
+def _clean_claim_text(text: str) -> str:
+    """Clean and optionally truncate a claim statement.
+
+    Strips markdown bold/italic/code formatting. Truncates long statements
+    at sentence boundaries when possible.
+    """
+    # Strip markdown formatting
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)  # bold
+    text = re.sub(r"\*(.+?)\*", r"\1", text)        # italic
+    text = re.sub(r"`(.+?)`", r"\1", text)          # inline code
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)  # links
+    # Collapse whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+
+    if len(text) <= _MAX_CLAIM_LENGTH:
+        return text
+
+    # Try to truncate at last sentence boundary within limit
+    truncated = text[:_MAX_CLAIM_LENGTH]
+    last_period = max(truncated.rfind("。"), truncated.rfind(". "), truncated.rfind("！"))
+    if last_period > _MAX_CLAIM_LENGTH // 2:
+        return truncated[: last_period + 1]
+    return truncated.rstrip(" ,;") + "…"
+
+
 def _make_slug(text: str) -> str:
     """Generate a safe slug from a statement (first 80 chars)."""
     short = text.strip()[:80]
@@ -244,7 +273,7 @@ def extract_claims(
                 for section in _CLAIM_SECTIONS:
                     items = _extract_bullet_items(content, section)
                     for item in items:
-                        text = item["text"].strip()
+                        text = _clean_claim_text(item["text"].strip())
                         if len(text) < 20:
                             continue
                         if _is_investment_advice(text):

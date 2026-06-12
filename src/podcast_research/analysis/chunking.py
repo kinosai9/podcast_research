@@ -507,7 +507,11 @@ def merge_extraction_results(
 
     # Compact
     views = _compact_views(views, max_views)
-    insights = _compact_insights(insights, max_insights)
+    # P2-N.1: When views are very sparse (< 3), keep more insights to preserve
+    # technical context. They may contain investment-relevant signal even if
+    # the LLM didn't classify them as formal investment views.
+    effective_max_insights = max(max_insights, 12) if len(views) < 3 else max_insights
+    insights = _compact_insights(insights, effective_max_insights)
     entities = _compact_entities(entities, max_entities)
     risks = risks[:max_risks]
     signals = _compact_signals(signals, max_signals)

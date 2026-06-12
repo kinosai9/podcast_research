@@ -71,7 +71,15 @@ def save_report(
 
 
 def save_investment_views(session: Session, report_id: int, views: list[InvestmentView]) -> None:
+    # P2-N.1: Dedup by (target_name, view_direction) within same report
+    seen: set[tuple[str, str]] = set()
+    deduped: list[InvestmentView] = []
     for v in views:
+        key = (v.target_name.strip().lower(), v.view_direction)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(v)
+    for v in deduped:
         rec = InvestmentViewRecord(
             report_id=report_id,
             target_name=v.target_name,
@@ -150,6 +158,33 @@ def _parse_focus_areas(raw: str) -> list[str]:
         return json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         return []
+
+
+def find_report_by_video_id(session: Session, video_id: str) -> dict | None:
+    """Find the most recent report for a given YouTube video_id.
+
+    Returns the latest report dict (id, created_at, episode_id) or None.
+    Used to prevent duplicate analysis of the same video.
+    """
+    if not video_id:
+        return None
+    row = (
+        session.query(Report, Episode)
+        .join(Episode, Report.episode_id == Episode.id)
+        .filter(Episode.video_id == video_id)
+        .order_by(Report.analysis_timestamp.desc())
+        .first()
+    )
+    if not row:
+        return None
+    report, episode = row
+    return {
+        "id": report.id,
+        "episode_id": report.episode_id,
+        "video_id": episode.video_id,
+        "created_at": report.analysis_timestamp,
+        "title": episode.title,
+    }
 
 
 def _count_views(session: Session, report_id: int) -> int:
@@ -257,7 +292,8 @@ def get_report_detail(session: Session, report_id: int) -> dict | None:
         "llm_provider": report.llm_provider,
         "llm_model": report.llm_model,
         "created_at": report.analysis_timestamp,
-        "report_markdown": report.report_markdown,
+        "extraction_json": report.extraction_json or "",
+        "report_markdown": report.report_markdown or "",
         "views": [
             {
                 "target_name": v.target_name,

@@ -22,7 +22,7 @@
     <tbody>
         {% for r in reports %}
         <tr>
-            <td style="color:var(--muted);font-size:0.78rem">#{{ r.id }}</td>
+            <td style="color:var(--muted);font-size:0.78rem">#{{ loop.index }}</td>
             <td style="white-space:nowrap">{{ r.created_at.strftime("%Y-%m-%d") if r.created_at else "-" }}</td>
             <td>
                 <span class="tag tag-source {{ r.source_type }}">{{ r.source_type }}</span>

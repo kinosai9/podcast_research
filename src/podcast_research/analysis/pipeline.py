@@ -254,6 +254,25 @@ def _run_pipeline(
     # 4. 入库
     init_db()
     session = get_session()
+
+    # P2-N.1: Dedup — skip if this video already has a report
+    video_id_for_dedup = episode_extra.get("video_id", "")
+    force_reanalyze = episode_extra.get("force", False)
+    if video_id_for_dedup and not force_reanalyze:
+        from podcast_research.db.repository import find_report_by_video_id
+        existing = find_report_by_video_id(session, video_id_for_dedup)
+        if existing:
+            logger.info("Video %s already has report_id=%d, skipping duplicate.", video_id_for_dedup, existing["id"])
+            return {
+                "episode_id": existing["episode_id"],
+                "report_id": existing["id"],
+                "skipped": True,
+                "existing_report": True,
+                "view_count": 0,
+                "entity_count": 0,
+                "report_path": "",
+                "focus_areas": [],
+            }
     try:
         ep_id = save_episode(
             session, episode_title, source_path, subtitle_format, subtitle_hash,
