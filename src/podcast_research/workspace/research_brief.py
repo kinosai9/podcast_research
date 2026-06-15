@@ -72,8 +72,9 @@ def generate_brief(snapshot: WorkspaceSnapshot) -> ResearchBrief:
     brief.active_topics = topic_scores[:5]
 
     # ── Active Companies (weighted scoring) ──
+    # P2-N.4.3.2: Use filtered core_companies() to exclude non-company entities
     company_scores = []
-    for c in snapshot.companies:
+    for c in snapshot.core_companies():
         c_count = snapshot.claims_count_for(c.name)
         s_count = snapshot.signals_count_for(c.name)
         r_count = len(c.source_reports)
@@ -133,66 +134,56 @@ def _build_summary(brief: ResearchBrief, snapshot: WorkspaceSnapshot) -> list[st
     """
     from podcast_research.utils.display import clean_display_text
 
+    # P2-N.4.3.2: Generic topic names that shouldn't be sole subjects
+    _GENERIC_TOPICS = frozenset({
+        "ai", "market", "model", "technology", "tech",
+        "investment", "investing", "finance", "business",
+    })
+
     bullets = []
 
-    # 1. Most active topic — explain focus areas and related companies
-    if brief.active_topics and brief.active_topics[0].score > 0:
-        t = brief.active_topics[0]
-        # Find related companies for this topic
+    # 1. Most active non-generic topic — explain what changed and why it matters
+    active_topics = [t for t in brief.active_topics
+                     if t.name.lower() not in _GENERIC_TOPICS]
+    if active_topics and active_topics[0].score > 0:
+        t = active_topics[0]
         related_companies = _find_related_companies(t.name, snapshot)
-        # Find representative claim text for context
         context_phrase = _derive_topic_context(t.name, snapshot)
-        parts = [f"{t.name} 是当前最活跃主题"]
+        # P2-N.4.3.2: Explain change, not just "most active"
         if context_phrase:
-            parts.append(f"讨论集中在{context_phrase}")
-        if related_companies:
-            parts.append(f"相关公司包括 {'、'.join(related_companies[:3])}")
-        bullets.append("，".join(parts) + "。")
+            bullets.append(f"{t.name} 方面，讨论聚焦{context_phrase}。"
+                          f"涉及 {t.claims} 条判断。")
+        elif related_companies:
+            bullets.append(f"{t.name} 在本轮报告中活跃，"
+                          f"相关公司包括 {'、'.join(related_companies[:3])}。"
+                          f"涉及 {t.claims} 条判断。")
+        else:
+            bullets.append(f"{t.name} 在本轮报告中活跃，涉及 {t.claims} 条判断。")
 
-    # 2. Most active company — explain what's being discussed
-    if brief.active_companies and brief.active_companies[0].score > 0:
-        c = brief.active_companies[0]
-        related_topics = _find_related_topics(c.name, snapshot)
-        parts = [f"{c.name} 在近期报告中讨论最为集中"]
+    # 2. Most active company (watchlist priority)
+    active_companies = brief.active_companies
+    if active_companies and active_companies[0].score > 0:
+        c = active_companies[0]
+        related_topics = _find_related_topics(c.name, snapshot)[:3]
         if related_topics:
-            parts.append(f"主要涉及 {'、'.join(related_topics[:3])}")
-        if c.claims > 0:
-            parts.append(f"涵盖 {c.claims} 条关键判断")
-        bullets.append("，".join(parts) + "。")
+            bullets.append(f"{c.name} 在近期报告中讨论集中，"
+                          f"主要涉及 {'、'.join(related_topics)}。")
+        elif c.claims > 0:
+            bullets.append(f"{c.name} 在近期报告中受到关注，"
+                          f"涵盖 {c.claims} 条判断。")
 
-    # 3. Coverage summary — reports + channels + knowledge accumulation
-    if brief.recommended_reports:
-        channels = snapshot.channels or []
-        channel_names = [ch.name for ch in channels[:4]]
-        parts = [f"知识库已积累 {brief.total_claims} 条判断"]
-        if brief.total_signals > 0:
-            parts.append(f"{brief.total_signals} 个观察点")
-        if channel_names:
-            parts.append(f"来自 {'、'.join(channel_names)} 等 {len(channels)} 个频道")
-        parts.append(f"共 {brief.total_reports} 份报告")
-        bullets.append("，".join(parts) + "。")
+    # 3. Coverage summary — compact
+    channels = snapshot.channels or []
+    bullets.append(f"知识库共 {brief.total_reports} 份报告（"
+                  f"{', '.join(ch.name for ch in channels[:3])} 等），"
+                  f"{brief.total_claims} 条判断，{brief.total_signals} 个观察点。")
 
-    # 4. What to watch — actionable signals
-    core_topics = snapshot.core_topics()
-    watching_signals = snapshot.watching_signals()
-    if watching_signals:
-        active_core = [t.name for t in core_topics
-                       if snapshot.claims_count_for(t.name) > 0
-                       or snapshot.signals_count_for(t.name) > 0]
-        if active_core:
-            bullets.append(
-                f"值得持续关注的方向：{'、'.join(active_core[:4])}。"
-                f"另有 {len(watching_signals)} 个跟踪信号建议审阅。"
-            )
-
-    # 5. Reinforced claims — what's gaining confidence
+    # 4. Reinforced claims — what's gaining confidence
     if brief.reinforced_claims:
-        cleaned = [clean_display_text(c, 60) for c in brief.reinforced_claims[:2]]
+        cleaned = [clean_display_text(c, 40) for c in brief.reinforced_claims[:1]]
         snippets = "；".join(cleaned)
-        bullets.append(
-            f"{len(brief.reinforced_claims)} 条判断被多份报告交叉验证，可信度较高。"
-            f"如：{snippets}"
-        )
+        bullets.append(f"{len(brief.reinforced_claims)} 条判断被多份报告交叉验证，可信度较高。"
+                      f"如：{snippets}")
 
     return bullets[:5]
 

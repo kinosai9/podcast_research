@@ -119,35 +119,57 @@ def refresh_curation_status(
 
 
 def _determine_topic_curation(content: str) -> str:
-    """Determine curation_status for a topic card."""
+    """Determine curation_status for a topic card.
+
+    P2-N.4.3: Now delegates to system_curation module for richer rules.
+    Falls back to simple rules if snapshot not available.
+    """
     has_llm_wiki = "<!-- LLM-WIKI:BEGIN" in content
     fm = _parse_frontmatter(content)
     source_reports = fm.get("source_reports", [])
     if not isinstance(source_reports, list):
         source_reports = []
 
+    # P2-N.4.3: LLM-WIKI enhanced overrides everything
     if has_llm_wiki:
         return "enhanced"
-    elif len(source_reports) > 0:
+
+    # P2-N.4.3: Check user_curation first — user override wins
+    user_curation = fm.get("curation_status", "")
+    if user_curation and user_curation not in ("raw", "unknown", ""):
+        return user_curation
+
+    # Fall back to simple rules (detailed system_curation computed at scan time)
+    if len(source_reports) > 0:
         return "indexed"
-    else:
-        return "raw"
+    return "raw"
 
 
 def _determine_company_curation(content: str) -> str:
-    """Determine curation_status for a company card."""
+    """Determine curation_status for a company card.
+
+    P2-N.4.3: Now delegates to system_curation module for richer rules.
+    Falls back to simple rules if snapshot not available.
+    """
     has_llm_wiki = "<!-- LLM-WIKI:BEGIN" in content
     fm = _parse_frontmatter(content)
     source_reports = fm.get("source_reports", [])
     if not isinstance(source_reports, list):
         source_reports = []
 
+    # P2-N.4.3: LLM-WIKI enhanced overrides everything
     if has_llm_wiki:
         return "enhanced"
-    elif len(source_reports) > 0:
+
+    # P2-N.4.3: Check user_curation first — user override wins
+    user_curation = fm.get("curation_status", "")
+    if user_curation and user_curation not in ("raw", "unknown", ""):
+        return user_curation
+
+    # Fall back to simple rules (detailed system_curation computed at scan time)
+    if len(source_reports) > 0:
         return "indexed"
-    else:
-        return "raw"
+    return "raw"
 
 
 def _determine_claim_curation(fm: dict) -> str:

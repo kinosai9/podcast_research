@@ -66,6 +66,9 @@ def refresh_workspace(
 ) -> dict:
     """Scan vault and regenerate Home.md, Knowledge Map, and Review Queue.
 
+    P2-N.4.3: Now computes system_curation for topics/companies and review_priority
+    for claims/signals. Passes research brief and watchlist to Home for richer display.
+
     Args:
         vault_path: Path to Obsidian vault root.
         dry_run: If True, scan and generate content but don't write files.
@@ -86,6 +89,59 @@ def refresh_workspace(
     # Scan
     scanner = VaultScanner(vault_path)
     snapshot = scanner.scan()
+
+    # P2-N.4.3: Compute system_curation for topics and companies
+    try:
+        from podcast_research.workspace.system_curation import (
+            compute_company_system_curation,
+            compute_topic_system_curation,
+        )
+        from podcast_research.workspace.watchlist import load_watchlist
+        wl_config = load_watchlist(vault_path)
+        wl_companies = set(wl_config.companies)
+        wl_topics = set(wl_config.topics)
+    except Exception:
+        wl_config = None
+        wl_companies = set()
+        wl_topics = set()
+
+    for t in snapshot.topics:
+        t.system_curation = compute_topic_system_curation(t, snapshot, wl_topics)
+    for c in snapshot.companies:
+        c.system_curation = compute_company_system_curation(c, snapshot, wl_companies)
+
+    # P2-N.4.3: Compute review_priority for claims and signals
+    try:
+        from podcast_research.workspace.review_priority import (
+            compute_claim_review_priority,
+            compute_signal_review_priority,
+        )
+        for cl in snapshot.claims:
+            cl.review_priority = compute_claim_review_priority(
+                cl, snapshot, wl_companies, wl_topics,
+            )
+        for s in snapshot.signals:
+            s.review_priority = compute_signal_review_priority(
+                s, snapshot, wl_companies, wl_topics,
+            )
+    except Exception:
+        pass
+
+    # P2-N.4.3: Generate research brief and watchlist items for Home enrichment
+    research_brief = None
+    watchlist_items = None
+    if do_home:
+        try:
+            from podcast_research.workspace.research_brief import generate_brief
+            research_brief = generate_brief(snapshot)
+        except Exception:
+            pass
+        try:
+            from podcast_research.workspace.watchlist import generate_watchlist_brief
+            if wl_config and (wl_config.companies or wl_config.topics):
+                watchlist_items = generate_watchlist_brief(snapshot, vault_path)
+        except Exception:
+            pass
 
     result = {
         "home": "",
@@ -112,11 +168,19 @@ def refresh_workspace(
 
     # Generate content
     if do_home:
-        result["home"] = generate_home_dashboard(snapshot)
+        result["home"] = generate_home_dashboard(
+            snapshot,
+            research_brief=research_brief,
+            watchlist_items=watchlist_items,
+            watchlist_config=wl_config,
+        )
     if do_km:
         result["knowledge_map"] = generate_knowledge_map(snapshot)
     if do_rq:
-        result["review_queue"] = generate_review_queue(snapshot)
+        result["review_queue"] = generate_review_queue(
+            snapshot,
+            watchlist_config=wl_config,
+        )
 
     # Write files (unless dry-run)
     if not dry_run:

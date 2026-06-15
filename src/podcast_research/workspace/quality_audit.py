@@ -792,8 +792,8 @@ def export_audit_markdown(result: QualityAuditResult, path: Path) -> None:
         active_count = result.entity_confusions_active
         lines += [
             "", "## 6. Entity Hygiene Findings", "",
-            f"| metric | count |",
-            f"|--------|-------|",
+            "| metric | count |",
+            "|--------|-------|",
             f"| raw (total ever detected) | {result.entity_confusions_raw} |",
             f"| **active (needs fixing)** | **{result.entity_confusions_active}** |",
             f"| archived (in backup) | {result.entity_confusions_archived} |",
@@ -802,7 +802,7 @@ def export_audit_markdown(result: QualityAuditResult, path: Path) -> None:
             "",
         ]
         if active_count <= 3:
-            lines.append(f"> ✅ Active confusions <= 3, ready for next batch.")
+            lines.append("> ✅ Active confusions <= 3, ready for next batch.")
             lines.append("")
         lines.append("| name | detected_as | suspected_as | status | source_file | should_count? | suggested_action |")
         lines.append("|------|------------|--------------|--------|-------------|---------------|------------------|")

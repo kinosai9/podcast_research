@@ -183,6 +183,7 @@ class WatchlistItemBrief:
     status: str = "no_new_evidence"  # direct / indirect / no_new_evidence
     summary: str = ""
     card_exists: bool = True
+    context_topics: list[str] = field(default_factory=list)  # P2-N.4.3.2: topics discussed for companies
 
 
 def load_watchlist(vault_path: Path) -> WatchlistConfig:
@@ -369,6 +370,15 @@ def _build_item_brief(
     item.observations = observations[:5]
     item.observation_count = len(observations)
 
+    # P2-N.4.3.2: Extract context topics for company items
+    if item_type == "company":
+        context_topics_set: set[str] = set()
+        for c in snapshot.claims:
+            if name in c.related_companies:
+                for t in c.related_topics:
+                    context_topics_set.add(t)
+        item.context_topics = sorted(context_topics_set)[:5]
+
     # Status
     if item.direct_count > 0:
         item.status = "direct"
@@ -393,16 +403,25 @@ def _get_active_topic_names(snapshot: WorkspaceSnapshot) -> set[str]:
 
 
 def _build_item_summary(item: WatchlistItemBrief) -> str:
-    """Build natural language summary for a watchlist item."""
+    """Build natural language summary for a watchlist item.
+
+    P2-N.4.3.2: Adds topic context to company items — what subjects
+    are driving the discussion around this company.
+    """
     if not item.card_exists:
         return "未找到对应知识卡片，建议先分析相关报告。"
 
     if item.status == "direct":
         parts = []
+        # P2-N.4.3.2: Topic context for companies
+        if item.item_type == "company" and item.context_topics:
+            topics_str = "、".join(item.context_topics[:3])
+            if topics_str:
+                parts.append(f"围绕 {topics_str} 等方向")
         if item.direct_count > 0:
-            parts.append(f"本轮有 {item.direct_count} 条直接相关更新")
+            parts.append(f"本轮有 {item.direct_count} 条相关更新")
         if item.reinforced_count > 0:
-            parts.append(f"{item.reinforced_count} 条判断被多份报告交叉验证")
+            parts.append(f"{item.reinforced_count} 条被多份报告交叉验证")
         if item.observation_count > 0:
             parts.append(f"{item.observation_count} 个观察点需继续跟踪")
         return "，".join(parts) + "。" if parts else "有直接相关更新。"

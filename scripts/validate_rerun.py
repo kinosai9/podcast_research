@@ -5,20 +5,20 @@ Checks all 8 validation points after a rerun is completed.
 Usage: uv run python scripts/validate_rerun.py <video_id> <new_report_id>
 """
 
+# Fix encoding for Windows console
+import io
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
 
-# Fix encoding for Windows console
-import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 
 def main(video_id: str, new_report_id: int):
-    from podcast_research.db.session import init_db, get_session
-    from podcast_research.db.models import ChannelVideo, Report, Episode
     from podcast_research.config_store import get_user_vault_path
+    from podcast_research.db.models import ChannelVideo, Report
+    from podcast_research.db.session import get_session, init_db
     from podcast_research.utils.file_io import read_text_safe
 
     init_db()
@@ -165,27 +165,27 @@ def main(video_id: str, new_report_id: int):
     # ── Write report ──
     report_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        f"# P2-M.3 Rerun Replacement Validation Report",
-        f"",
+        "# P2-M.3 Rerun Replacement Validation Report",
+        "",
         f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"**Video ID**: `{video_id}`",
         f"**New Report ID**: `{new_report_id}`",
         f"**Result**: {passed}/{total} passed",
-        f"",
-        f"## Check Results",
-        f"",
-        f"| # | Check | Result | Detail |",
-        f"|---|-------|--------|--------|",
+        "",
+        "## Check Results",
+        "",
+        "| # | Check | Result | Detail |",
+        "|---|-------|--------|--------|",
     ]
     for r in results:
         lines.append(f"| {r['point']} | {r['label']} | {r['icon']} | {r['detail']} |")
     lines.append("")
-    lines.append(f"## Summary")
-    lines.append(f"")
+    lines.append("## Summary")
+    lines.append("")
     lines.append(f"{passed}/{total} checks passed.")
     if not all_pass:
-        lines.append(f"")
-        lines.append(f"### Failed checks:")
+        lines.append("")
+        lines.append("### Failed checks:")
         for r in results:
             if not r["passed"]:
                 lines.append(f"- **P{r['point']}**: {r['label']} — {r['detail']}")

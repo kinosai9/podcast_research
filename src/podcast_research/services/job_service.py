@@ -613,7 +613,8 @@ def delete_job(job_id: str) -> None:
     with _lock:
         _JOBS.pop(job_id, None)
     try:
-        from podcast_research.db.models import Job as JobORM, JobEvent as JobEventORM
+        from podcast_research.db.models import Job as JobORM
+        from podcast_research.db.models import JobEvent as JobEventORM
         from podcast_research.db.session import get_session
         session = get_session()
         try:

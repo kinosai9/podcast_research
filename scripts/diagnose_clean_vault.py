@@ -17,8 +17,6 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
-
 
 # ── Constants ────────────────────────────────────────────────────────
 
@@ -57,9 +55,7 @@ def parse_frontmatter(content: str) -> dict:
             continue
         key = line[:colon_idx].strip()
         val = line[colon_idx + 1:].strip()
-        if val.startswith('"') and val.endswith('"'):
-            val = val[1:-1]
-        elif val.startswith("'") and val.endswith("'"):
+        if val.startswith('"') and val.endswith('"') or val.startswith("'") and val.endswith("'"):
             val = val[1:-1]
         if key:
             result[key] = val
@@ -316,7 +312,6 @@ def audit_db_metadata(vault_path: Path, db_path: Path | None = None) -> list[dic
 
 def audit_companies(vault_path: Path, db_path: Path | None = None) -> dict:
     """Check company cards, claim links, signal links, scanner counts."""
-    import sqlite3
 
     results = {
         "companies": [],
@@ -742,7 +737,7 @@ def run_diagnostic(vault_path: Path, db_path: Path | None = None) -> dict:
         status_str = "PASS" if val else "FAIL"
     print(f"  [{status_str}] {key}: {val}")
     if sync_results["issues"]:
-        print(f"  Issues:")
+        print("  Issues:")
         for issue in sync_results["issues"]:
             print(f"    ❌ {issue}")
     print()

@@ -83,6 +83,77 @@ def _render(name: str, context: dict, status_code: int = 200) -> HTMLResponse:
     return HTMLResponse(template.render(context), status_code=status_code)
 
 
+def _batch_archive_similar(vault_path: Path, card_id: str, card_type: str, new_status: str) -> int:
+    """Auto-archive cards similar to the one the user just handled.
+
+    P2-N.4.3.2: When a user adopts/archives/watches a claim or signal,
+    find all similar items in the vault and auto-archive them to prevent
+    the whack-a-mole UX where another near-duplicate appears immediately.
+
+    Returns count of auto-archived items.
+    """
+    from podcast_research.claim_signal.review import (
+        _parse_frontmatter, update_claim_status, update_signal_status,
+    )
+    from podcast_research.utils.file_io import read_text_safe
+    from podcast_research.workspace.generators import _strip_for_dedup, _token_overlap
+
+    # Read the source card to get its text
+    dir_name = "06_Claims" if card_type == "claim" else "07_Signals"
+    source_path = vault_path / dir_name / f"{card_id}.md"
+    if not source_path.exists():
+        return 0
+
+    try:
+        source_content = read_text_safe(source_path)
+    except Exception:
+        return 0
+    source_fm = _parse_frontmatter(source_content)
+    source_text = source_fm.get("claim", "") or source_fm.get("signal", "") or ""
+    if not source_text:
+        return 0
+
+    source_stripped = _strip_for_dedup(source_text)
+
+    # Scan all cards of same type for similar content
+    target_dir = vault_path / dir_name
+    batched = 0
+    archive_status = "outdated" if card_type == "claim" else "resolved"
+    note = f"auto-archived: similar to {card_id}"
+
+    for p in sorted(target_dir.glob("*.md")):
+        if p.stem == card_id:
+            continue
+        try:
+            content = read_text_safe(p)
+        except Exception:
+            continue
+        fm = _parse_frontmatter(content)
+        # Only archive active/open cards
+        current_status = fm.get("status", "")
+        if card_type == "claim" and current_status not in ("active", "challenged"):
+            continue
+        if card_type == "signal" and current_status not in ("open",):
+            continue
+
+        other_text = fm.get("claim", "") or fm.get("signal", "") or ""
+        if not other_text:
+            continue
+
+        # Check similarity
+        if _token_overlap(source_text, other_text) > 0.50:
+            try:
+                if card_type == "claim":
+                    update_claim_status(vault_path, p.stem, archive_status, note=note)
+                else:
+                    update_signal_status(vault_path, p.stem, archive_status, note=note)
+                batched += 1
+            except Exception:
+                pass
+
+    return batched
+
+
 def _build_recommendations(
     pending_patches: list[dict],
     review_claims: list[dict],
@@ -175,12 +246,78 @@ def _enrich_recommended_with_report_ids(recs: list[dict]) -> None:
 
 
 def _build_dashboard_context(vault_path: Path) -> dict:
-    """Build dashboard data from vault scan. Returns context dict or error info."""
+    """Build dashboard data from vault scan. Returns context dict or error info.
+
+    P2-N.4.3: Uses shared system_curation and review_priority logic for consistency
+    between web dashboard and Obsidian Home.
+    """
     from podcast_research.workspace.scanner import VaultScanner
 
     scanner = VaultScanner(vault_path)
     snapshot = scanner.scan()
 
+    # P2-N.4.3: Compute system_curation for topics and companies
+    try:
+        from podcast_research.workspace.system_curation import (
+            compute_company_system_curation,
+            compute_topic_system_curation,
+            curation_label,
+        )
+        from podcast_research.workspace.watchlist import load_watchlist
+        wl_config = load_watchlist(vault_path)
+        wl_companies_set = set(wl_config.companies)
+        wl_topics_set = set(wl_config.topics)
+    except Exception:
+        wl_config = None
+        wl_companies_set = set()
+        wl_topics_set = set()
+        curation_label = lambda x: x  # noqa: E731
+
+    for t in snapshot.topics:
+        t.system_curation = compute_topic_system_curation(t, snapshot, wl_topics_set)
+    for c in snapshot.companies:
+        c.system_curation = compute_company_system_curation(c, snapshot, wl_companies_set)
+
+    # P2-N.4.3: Compute review_priority
+    try:
+        from podcast_research.workspace.review_priority import (
+            PRIORITY_AUTO_ACCEPTED,
+            PRIORITY_LOW,
+            claims_needing_review,
+            compute_claim_review_priority,
+            compute_signal_review_priority,
+            signals_needing_review,
+        )
+        for cl in snapshot.claims:
+            cl.review_priority = compute_claim_review_priority(
+                cl, snapshot, wl_companies_set, wl_topics_set,
+            )
+        for s in snapshot.signals:
+            s.review_priority = compute_signal_review_priority(
+                s, snapshot, wl_companies_set, wl_topics_set,
+            )
+        needs_review_n = len(claims_needing_review(snapshot, wl_companies_set, wl_topics_set)) + \
+                         len(signals_needing_review(snapshot, wl_companies_set, wl_topics_set))
+        auto_accepted_n = sum(
+            1 for c in snapshot.claims
+            if compute_claim_review_priority(c, snapshot, wl_companies_set, wl_topics_set) == PRIORITY_AUTO_ACCEPTED
+        ) + sum(
+            1 for s in snapshot.signals
+            if compute_signal_review_priority(s, snapshot, wl_companies_set, wl_topics_set) == PRIORITY_AUTO_ACCEPTED
+        )
+        low_priority_n = sum(
+            1 for c in snapshot.claims
+            if compute_claim_review_priority(c, snapshot, wl_companies_set, wl_topics_set) == PRIORITY_LOW
+        ) + sum(
+            1 for s in snapshot.signals
+            if compute_signal_review_priority(s, snapshot, wl_companies_set, wl_topics_set) == PRIORITY_LOW
+        )
+    except Exception:
+        needs_review_n = len(snapshot.active_claims()) + len(snapshot.open_signals())
+        auto_accepted_n = 0
+        low_priority_n = 0
+
+    # P2-N.4.3: Priority-grouped summary instead of raw counts
     summary = {
         "reports": len(snapshot.reports),
         "topics": len(snapshot.topics),
@@ -188,31 +325,53 @@ def _build_dashboard_context(vault_path: Path) -> dict:
         "companies": len(snapshot.companies),
         "core_companies": len(snapshot.core_companies()),
         "claims": len(snapshot.claims),
-        "active_claims": len(snapshot.active_claims()),
         "signals": len(snapshot.signals),
-        "open_signals": len(snapshot.open_signals()),
-        "watching_signals": len(snapshot.watching_signals()),
         "patches": len(snapshot.llm_patches),
         "pending_patches": len(snapshot.pending_patches()),
         "channels": len(snapshot.channels),
+        # P2-N.4.3: Priority-grouped (replaces active_claims/open_signals/watching_signals)
+        "needs_review": needs_review_n,
+        "auto_accepted": auto_accepted_n,
+        "low_priority": low_priority_n,
+        "tracking_signals": len(snapshot.tracking_signals()),
+        # Legacy fields kept for template compatibility
+        "active_claims": len(snapshot.active_claims()),
+        "open_signals": len(snapshot.open_signals()),
+        "watching_signals": len(snapshot.watching_signals()),
     }
 
     core_topics = []
     for t in sorted(snapshot.core_topics(), key=lambda x: x.name):
+        sys_cur = t.system_curation or ""
+        user_cur = t.curation_status or ""
+        if user_cur and user_cur not in ("raw", "unknown", "indexed", ""):
+            display_cur = user_cur
+        elif sys_cur:
+            display_cur = curation_label(sys_cur)
+        else:
+            display_cur = "—"
         core_topics.append({
             "name": t.name, "reports": len(t.source_reports),
             "claims": snapshot.claims_count_for(t.name),
             "signals": snapshot.signals_count_for(t.name),
-            "curation": t.curation_status or "unknown",
+            "curation": display_cur,
         })
 
     core_companies = []
     for c in sorted(snapshot.core_companies(), key=lambda x: x.name):
+        sys_cur = c.system_curation or ""
+        user_cur = c.curation_status or ""
+        if user_cur and user_cur not in ("raw", "unknown", "indexed", ""):
+            display_cur = user_cur
+        elif sys_cur:
+            display_cur = curation_label(sys_cur)
+        else:
+            display_cur = "—"
         core_companies.append({
             "name": c.name, "reports": len(c.source_reports),
             "claims": snapshot.claims_count_for(c.name),
             "signals": snapshot.signals_count_for(c.name),
-            "curation": c.curation_status or "unknown",
+            "curation": display_cur,
         })
 
     pending_patches = []
@@ -227,20 +386,46 @@ def _build_dashboard_context(vault_path: Path) -> dict:
     from podcast_research.workspace.generators import (
         _sort_claims_by_priority,
         _sort_signals_by_priority,
+        _dedup_needs_review_items,
     )
 
+    # P2-N.4.3: Show needs-review items (critical + high priority)
+    try:
+        needs_claims = [
+            c for c in snapshot.review_claims()
+            if getattr(c, 'review_priority', '') in ('critical', 'high')
+        ]
+        # P2-N.4.3.2: Only show "open" signals in recommendations — "watching"
+        # signals have already been acknowledged by the user and should appear
+        # in the tracking section, not re-occupy attention in 今日建议.
+        needs_signals = [
+            s for s in snapshot.review_signals()
+            if getattr(s, 'review_priority', '') in ('critical', 'high')
+            and s.status == "open"  # exclude already-acknowledged watching signals
+        ]
+        # P2-N.4.3.2: Dedup before building review lists — prevents
+        # similar claims/signals (different markdown, same content)
+        # from cycling through recommendations after user action.
+        needs_claims_deduped = _dedup_needs_review_items(needs_claims)
+        needs_signals_deduped = _dedup_needs_review_items(needs_signals)
+    except Exception:
+        needs_claims_deduped = snapshot.review_claims()
+        needs_signals_deduped = snapshot.review_signals()
+
     review_claims = []
-    for c in _sort_claims_by_priority(snapshot.review_claims())[:5]:
+    for c in _sort_claims_by_priority(needs_claims_deduped)[:5]:
         review_claims.append({
             "card_id": c.card_id, "status": c.status,
             "claim": c.claim if c.claim else c.card_id,
+            "priority": getattr(c, 'review_priority', ''),
         })
 
     review_signals = []
-    for s in _sort_signals_by_priority(snapshot.review_signals())[:5]:
+    for s in _sort_signals_by_priority(needs_signals_deduped)[:5]:
         review_signals.append({
             "card_id": s.card_id, "status": s.status,
             "signal": s.signal if s.signal else s.card_id,
+            "priority": getattr(s, 'review_priority', ''),
         })
 
     recent_reports = []
@@ -272,9 +457,12 @@ def _build_dashboard_context(vault_path: Path) -> dict:
         from podcast_research.workspace.watchlist import (
             ensure_watchlist_template,
             generate_watchlist_brief,
-            load_watchlist,
         )
-        wl_config = load_watchlist(vault_path)
+        from podcast_research.workspace.watchlist import (
+            load_watchlist as _load_wl,
+        )
+        if wl_config is None:
+            wl_config = _load_wl(vault_path)
         watchlist_items = generate_watchlist_brief(snapshot, vault_path) if (
             wl_config.companies or wl_config.topics
         ) else []
@@ -1183,8 +1371,14 @@ def action_claim_status(request: Request, claim_id: str, status: str = Form(...)
         ok = update_claim_status(vp, claim_id, status, note=note)
         if not ok:
             return RedirectResponse(url=f"/dashboard?msg=error:Claim 不存在: {claim_id}", status_code=303)
+        # P2-N.4.3.2: Batch archive similar claims to prevent whack-a-mole
+        batched = _batch_archive_similar(vp, claim_id, "claim", status)
+        msg = f"Claim 状态已更新为 {status}"
+        if batched > 0:
+            msg += f"，同时自动归档了 {batched} 条相似判断"
+        anchor = "#recommendations" if return_to == "dashboard" else ""
         target = "/dashboard" if return_to == "dashboard" else "/patches"
-        return RedirectResponse(url=f"{target}?msg=success:Claim 状态已更新为 {status}", status_code=303)
+        return RedirectResponse(url=f"{target}?msg=success:{msg}{anchor}", status_code=303)
     except Exception as e:
         return RedirectResponse(url=f"/dashboard?msg=error:更新失败 — {e}", status_code=303)
 
@@ -1206,8 +1400,14 @@ def action_signal_status(request: Request, signal_id: str, status: str = Form(..
         ok = update_signal_status(vp, signal_id, status, note=note)
         if not ok:
             return RedirectResponse(url=f"/dashboard?msg=error:Signal 不存在: {signal_id}", status_code=303)
+        # P2-N.4.3.2: Batch archive similar signals to prevent whack-a-mole
+        batched = _batch_archive_similar(vp, signal_id, "signal", status)
+        msg = f"Signal 状态已更新为 {status}"
+        if batched > 0:
+            msg += f"，同时自动归档了 {batched} 条相似信号"
+        anchor = "#recommendations" if return_to == "dashboard" else ""
         target = "/dashboard" if return_to == "dashboard" else "/patches"
-        return RedirectResponse(url=f"{target}?msg=success:Signal 状态已更新为 {status}", status_code=303)
+        return RedirectResponse(url=f"{target}?msg=success:{msg}{anchor}", status_code=303)
     except Exception as e:
         return RedirectResponse(url=f"/dashboard?msg=error:更新失败 — {e}", status_code=303)
 

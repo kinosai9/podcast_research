@@ -25,7 +25,32 @@ _NOT_A_COMPANY: set[str] = {
     "application", "applications",
     "developer tools", "open source",
     "security", "safety",
+    # P2-N.4.3: Non-company entities that end up in 03_Companies/
+    "claude", "chatgpt", "gpt", "gpt-4", "gpt-5", "gemini", "sonnet", "sora",
+    "sam altman", "satya nadella", "donald trump",
+    "ai regulation", "ai compute infrastructure", "ai semiconductors",
+    "agentic ai", "enterprise ai", "venture capital", "vibe coding",
+    "gpu", "api", "sdk",
+    # Generic concepts that shouldn't be companies
+    "edge computing", "robotics", "quantum computing",
+    "saas", "platform", "data center",
+    # P2-N.4.3.2: Leaking non-company entities
+    "artificial intelligence", "codex", "deep research",
+    "enterprise ai adoption", "github copilot", "grok",
+    "mai models", "mcp", "microsoft 365", "microsoft azure",
+    "model context protocol", "opus", "reasoning models",
+    "美国科技公司", "ai数据中心电力基础设施",
+    "ai-washing companies", "cod ex",
 }
+
+# Entity types that are NOT companies — used for core_companies() filtering
+_NON_COMPANY_ENTITY_TYPES: frozenset[str] = frozenset({
+    "product", "model", "person", "topic", "macro",
+    "technology", "concept", "product_or_model",
+    "industry_theme", "policy_or_regulation", "metric",
+    "tool", "ide", "framework", "protocol", "platform",
+    "os", "hardware",
+})
 
 # Names that are definitely companies, not topics
 # (lowercased for case-insensitive matching)
@@ -101,7 +126,8 @@ class TopicInfo:
     tags: list[str] = field(default_factory=list)
     source_reports: list[str] = field(default_factory=list)
     updated_at: str = ""
-    curation_status: str = ""  # raw / indexed / reviewed / enhanced / archived
+    curation_status: str = ""  # user_curation: raw / indexed / reviewed / enhanced / archived
+    system_curation: str = ""  # P2-N.4.3: auto-computed curation tier
     topic_quality: str = ""    # useful / noisy / alias / manual_review / long_tail
 
 
@@ -117,7 +143,9 @@ class CompanyInfo:
     tags: list[str] = field(default_factory=list)
     source_reports: list[str] = field(default_factory=list)
     updated_at: str = ""
-    curation_status: str = ""  # raw / indexed / reviewed / enhanced / archived
+    curation_status: str = ""  # user_curation: raw / indexed / reviewed / enhanced / archived
+    system_curation: str = ""  # P2-N.4.3: auto-computed curation tier
+    entity_type: str = ""      # P2-N.4.3: company / organization / product / model / person / etc.
 
 
 @dataclass
@@ -132,6 +160,9 @@ class ClaimInfo:
     related_companies: list[str] = field(default_factory=list)
     updated_at: str = ""
     curation_status: str = ""  # raw / indexed / reviewed / enhanced / archived
+    review_priority: str = ""  # P2-N.4.3: critical / high / normal / low / auto_accepted
+    quality: str = ""          # high / medium / low
+    granularity: str = ""      # atomic / broad / duplicate / unclear
 
 
 @dataclass
@@ -147,6 +178,9 @@ class SignalInfo:
     tracking_status: str = ""  # from frontmatter if present
     updated_at: str = ""
     curation_status: str = ""  # raw / indexed / reviewed / enhanced / archived
+    review_priority: str = ""  # P2-N.4.3: critical / high / normal / low / auto_accepted
+    quality: str = ""          # high / medium / low
+    signal_type: str = ""      # competition / regulation / technology_bottleneck / etc.
 
 
 @dataclass
@@ -206,14 +240,53 @@ class WorkspaceSnapshot:
     # ── Company helpers ──
 
     def core_companies(self) -> list[CompanyInfo]:
-        """Companies that are high-value OR have >= 2 source reports.
+        """Companies filtered for Home display.
 
-        P2-N.1: Excludes names in _NOT_A_COMPANY (concepts misclassified as companies).
+        P2-N.4.3.2: Filters non-company entities, applies minimum criteria,
+        and caps at 15 items sorted by importance.
+        Criteria:
+          - Not in _NOT_A_COMPANY
+          - entity_type not in _NON_COMPANY_ENTITY_TYPES (if set)
+          - reports >= 2 AND (claims > 0 OR signals > 0 OR in watchlist)
         """
+        # Gather watchlist (check lazily for caching)
+        watchlist_set: set[str] = set()
+        try:
+            from podcast_research.workspace.watchlist import load_watchlist
+            wl = load_watchlist(self.vault_path)
+            watchlist_set = set(wl.companies)
+        except Exception:
+            pass
+
+        candidates = []
+        for c in self.companies:
+            if c.name.lower() in _NOT_A_COMPANY:
+                continue
+            if c.entity_type and c.entity_type.lower() in _NON_COMPANY_ENTITY_TYPES:
+                continue
+            reports_n = len(c.source_reports)
+            if reports_n < 2:
+                continue
+            claims_n = self.claims_count_for(c.name)
+            signals_n = self.signals_count_for(c.name)
+            in_wl = c.name in watchlist_set
+            is_high_value = c.name in HIGH_VALUE_COMPANIES
+            if not (claims_n > 0 or signals_n > 0 or in_wl or is_high_value):
+                continue
+            # Priority score: watchlist > signals > claims > reports
+            priority = (1 if in_wl else 0) * 1000 + signals_n * 10 + claims_n * 3 + reports_n
+            candidates.append((priority, c))
+
+        # Sort by priority descending, take top 15
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return [c for _, c in candidates[:15]]
+
+    def all_core_companies_unfiltered(self) -> list[CompanyInfo]:
+        """Return all companies that pass the legacy filter (for debugging)."""
         result = []
         for c in self.companies:
             if c.name.lower() in _NOT_A_COMPANY:
-                continue  # Skip: this is a concept, not a company
+                continue
             if c.name in HIGH_VALUE_COMPANIES or len(c.source_reports) >= 2:
                 result.append(c)
         return result
@@ -252,32 +325,113 @@ class WorkspaceSnapshot:
     # ── Cross-referencing helpers ──
 
     def claims_count_for(self, wiki_name: str) -> int:
-        """Count claims that reference a topic/company by wiki-link name."""
+        """Count claims that reference a topic/company by wiki-link name.
+
+        P2-N.4.3: Also matches by scanning claim text for the topic/company name.
+        """
         count = 0
+        name_lower = wiki_name.lower()
         for c in self.claims:
-            # Check related_topics / related_companies from frontmatter
+            # Direct frontmatter match
             if wiki_name in c.related_topics or wiki_name in c.related_companies:
                 count += 1
                 continue
-            # Also check source_reports for matching wiki-link
+            # Check source_reports for matching wiki-link
             for sr in c.source_reports:
                 if wiki_name in sr:
                     count += 1
                     break
+            else:
+                # Fallback: scan claim text for name
+                if name_lower in c.claim.lower():
+                    count += 1
         return count
 
     def signals_count_for(self, wiki_name: str) -> int:
-        """Count signals that reference a topic/company by wiki-link name."""
+        """Count signals referencing a topic/company. 3-pass aggregation.
+
+        P2-N.4.3.2: Three-pass system to catch signals even without backfill:
+          1. Direct: signal.related_topics frontmatter match
+          2. Alias: topic/company aliases match in signal text + related fields
+          3. Company-inferred: signal mentions a company that co-occurs with
+             this topic in claims (for topics only)
+
+        Only counts non-archived signals (archived already excluded at scan time).
+        """
+        # Pass 1: direct frontmatter match
         count = 0
+        matched_signal_ids: set[str] = set()
         for s in self.signals:
             if wiki_name in s.related_topics or wiki_name in s.related_companies:
                 count += 1
-                continue
-            for sr in s.source_reports:
-                if wiki_name in sr:
+                matched_signal_ids.add(s.card_id)
+
+        # Pass 2: alias match
+        topic_aliases = self._get_topic_aliases(wiki_name)
+        if topic_aliases:
+            name_lower = wiki_name.lower()
+            for s in self.signals:
+                if s.card_id in matched_signal_ids:
+                    continue
+                text = (s.signal + " " + " ".join(s.related_topics) +
+                        " " + " ".join(s.related_companies)).lower()
+                if name_lower in text:
                     count += 1
-                    break
+                    matched_signal_ids.add(s.card_id)
+                    continue
+                for alias in topic_aliases:
+                    if alias.lower() in text:
+                        count += 1
+                        matched_signal_ids.add(s.card_id)
+                        break
+
+        # Pass 3: company-inferred (for topics only)
+        # Signal → related companies → claims where company+topic co-occur
+        if self._is_topic_name(wiki_name):
+            company_topic_map = self._get_company_topic_map()
+            topic_companies = company_topic_map.get(wiki_name, set())
+            if topic_companies:
+                for s in self.signals:
+                    if s.card_id in matched_signal_ids:
+                        continue
+                    signal_companies = set(s.related_companies)
+                    if signal_companies & topic_companies:
+                        count += 1
+                        matched_signal_ids.add(s.card_id)
+
         return count
+
+    # ── Internal caching for aggregation ──
+
+    def _get_topic_aliases(self, wiki_name: str) -> list[str]:
+        """Get aliases for a topic by name."""
+        for t in self.topics:
+            if t.name == wiki_name:
+                return t.aliases
+        return []
+
+    def _is_topic_name(self, wiki_name: str) -> bool:
+        """Check if wiki_name is a topic (not a company)."""
+        return any(t.name == wiki_name for t in self.topics)
+
+    def _get_company_topic_map(self) -> dict[str, set[str]]:
+        """Build map: topic_name → set of companies that co-occur in claims.
+
+        Cached as WorkspaceSnapshot._company_topic_cache for performance.
+        """
+        if not hasattr(self, '_company_topic_cache'):
+            self._company_topic_cache: dict[str, set[str]] = {}
+        cache: dict[str, set[str]] = self._company_topic_cache  # type: ignore
+        if cache:
+            return cache
+        for claim in self.claims:
+            for topic in claim.related_topics:
+                if topic not in cache:
+                    cache[topic] = set()
+                for company in claim.related_companies:
+                    cache[topic].add(company)
+        self._company_topic_cache = cache
+        return cache
 
     def reports_count_for(self, wiki_name: str) -> int:
         """Count reports related to a topic/company based on card source_reports."""
@@ -417,6 +571,7 @@ class VaultScanner:
                 source_reports=source_reports,
                 updated_at=fm.get("updated_at", ""),
                 curation_status=fm.get("curation_status", ""),
+                system_curation=fm.get("system_curation", ""),
                 topic_quality=fm.get("topic_quality", ""),
             ))
         return results
@@ -444,6 +599,9 @@ class VaultScanner:
                 tags=fm.get("tags", []),
                 source_reports=source_reports,
                 updated_at=fm.get("updated_at", ""),
+                curation_status=fm.get("curation_status", ""),
+                system_curation=fm.get("system_curation", ""),
+                entity_type=fm.get("entity_type", ""),
             ))
         return results
 
@@ -480,6 +638,10 @@ class VaultScanner:
                 related_topics=related_topics,
                 related_companies=related_companies,
                 updated_at=fm.get("updated_at", ""),
+                curation_status=fm.get("curation_status", ""),
+                review_priority=fm.get("review_priority", ""),
+                quality=fm.get("quality", ""),
+                granularity=fm.get("granularity", ""),
             ))
         return results
 
@@ -518,6 +680,9 @@ class VaultScanner:
                 tracking_status=fm.get("tracking_status", ""),
                 updated_at=fm.get("updated_at", ""),
                 curation_status=fm.get("curation_status", ""),
+                review_priority=fm.get("review_priority", ""),
+                quality=fm.get("quality", ""),
+                signal_type=fm.get("signal_type", ""),
             ))
         return results
 

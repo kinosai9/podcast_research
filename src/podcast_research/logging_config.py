@@ -14,7 +14,8 @@ def setup_logging(level: str | None = None) -> None:
     if root.handlers:
         return
 
-    import io, sys
+    import io
+    import sys
     # Wrap stderr with UTF-8 to prevent GBK encoding crashes on Windows
     # when log messages contain emoji or non-GBK Unicode characters.
     utf8_stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
