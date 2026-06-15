@@ -573,33 +573,42 @@ class TestReviewQueue:
 
     def test_claims_to_review(self, tmp_path):
         vault = _make_vault(tmp_path)
-        # P2-N.4.3: Challenged claims are high priority → appear in needs review
-        # Active claims without watchlist are normal → don't appear in needs review
-        _add_claim(vault, "claim_001", status="active")  # normal → not shown
-        _add_claim(vault, "claim_002", status="challenged")  # high priority
-        _add_claim(vault, "claim_003", status="verified")
+        # P2-N.4.4.1: Claims must pass actionability gate (not just priority)
+        _add_claim(vault, "claim_001", status="active",
+                    claim_text="Normal active claim with enough text for review")
+        _add_claim(vault, "claim_002", status="challenged",
+                    claim_text="Challenged claim about AI agents transforming enterprise")
+        _add_claim(vault, "claim_003", status="verified",
+                    claim_text="Verified claim about AI agents transforming enterprise")
         scanner = VaultScanner(vault)
         snapshot = scanner.scan()
+        snapshot.claims[0].review_priority = "normal"
+        snapshot.claims[1].review_priority = "high"
+        snapshot.claims[2].review_priority = "high"
         content = generate_review_queue(snapshot)
         assert "需要你确认" in content
-        assert "claim_002" in content  # challenged = high priority
-        # verified claims don't appear in review
-        assert "claim_003" not in content
+        assert "claim_002" in content  # challenged + high + actionable
+        assert "claim_003" not in content  # verified → already accepted
 
     def test_signals_to_review(self, tmp_path):
         vault = _make_vault(tmp_path)
-        # P2-N.4.3: "watching" signals are high priority → appear in needs review
-        # "open" without watchlist → normal/low → don't appear
-        _add_signal(vault, "signal_001", status="open")  # normal → not shown
-        _add_signal(vault, "signal_002", status="watching")  # high priority
-        _add_signal(vault, "signal_003", status="resolved")  # auto_accepted
+        # P2-N.4.4.1: Signals must pass actionability gate (not just priority)
+        _add_signal(vault, "signal_001", status="open",
+                     signal_text="Open signal about GPU supply chain risk in semiconductor industry")
+        _add_signal(vault, "signal_002", status="watching",
+                     signal_text="Watching signal about new EU AI regulation affecting tech companies")
+        _add_signal(vault, "signal_003", status="resolved",
+                     signal_text="Resolved signal about GPU supply chain risk in semiconductor industry")
         scanner = VaultScanner(vault)
         snapshot = scanner.scan()
+        snapshot.signals[0].review_priority = "high"
+        snapshot.signals[1].review_priority = "high"
+        snapshot.signals[2].review_priority = "high"
         content = generate_review_queue(snapshot)
         assert "需要你确认" in content
-        assert "signal_002" in content  # watching = high priority
-        # resolved signals don't appear in needs review
-        assert "signal_003" not in content
+        assert "signal_001" in content  # open + high = actionable
+        assert "signal_002" not in content  # watching = already followed
+        assert "signal_003" not in content  # resolved = closed
 
     def test_tracking_items(self, tmp_path):
         vault = _make_vault(tmp_path)
@@ -1232,27 +1241,30 @@ class TestReviewQueueTopN:
         # Active claims without watchlist are normal → shown in system auto-curation summary
         for i in range(15):
             _add_claim(vault, f"claim_{i:03d}", status="challenged",
-                        claim_text=f"Claim {i}")
+                        claim_text=f"Challenged claim about AI industry trend number {i} with enough detail")
         from podcast_research.workspace.generators import generate_review_queue
         from podcast_research.workspace.scanner import VaultScanner
         scanner = VaultScanner(vault)
         snapshot = scanner.scan()
+        for c in snapshot.claims:
+            c.review_priority = "high"
         content = generate_review_queue(snapshot)
         claim_links = content.count("[[06_Claims/")
         assert claim_links <= 10
-        # Remaining items are referenced in the summary
         assert "more items" in content.lower() or claim_links > 0
 
     def test_limits_signals_to_10(self, tmp_path):
         vault = _make_vault(tmp_path)
         # P2-N.4.3: Only watching signals (high priority) appear in needs-review
         for i in range(15):
-            _add_signal(vault, f"signal_{i:03d}", status="watching",
-                         signal_text=f"Signal {i}")
+            _add_signal(vault, f"signal_{i:03d}", status="open",
+                         signal_text=f"Open signal about semiconductor supply chain risk number {i}")
         from podcast_research.workspace.generators import generate_review_queue
         from podcast_research.workspace.scanner import VaultScanner
         scanner = VaultScanner(vault)
         snapshot = scanner.scan()
+        for s in snapshot.signals:
+            s.review_priority = "high"
         content = generate_review_queue(snapshot)
         signal_links = content.count("[[07_Signals/")
         assert signal_links <= 10
@@ -1261,14 +1273,17 @@ class TestReviewQueueTopN:
     def test_under_10_shows_all_no_backlog(self, tmp_path):
         vault = _make_vault(tmp_path)
         # P2-N.4.3: Only challenged claims appear in needs-review
-        _add_claim(vault, "claim_001", status="challenged")  # high priority
-        _add_claim(vault, "claim_002", status="challenged")  # high priority
+        _add_claim(vault, "claim_001", status="challenged",
+                    claim_text="Claim about AI agents transforming enterprise workflows with automation")
+        _add_claim(vault, "claim_002", status="challenged",
+                    claim_text="Claim about semiconductor supply chain constraints in global market")
         from podcast_research.workspace.generators import generate_review_queue
         from podcast_research.workspace.scanner import VaultScanner
         scanner = VaultScanner(vault)
         snapshot = scanner.scan()
+        for c in snapshot.claims:
+            c.review_priority = "high"
         content = generate_review_queue(snapshot)
-        # Both challenged claims should appear
         assert "claim_001" in content
         assert "claim_002" in content
 
@@ -2072,7 +2087,10 @@ class TestNeedsReviewCompression:
 
     def test_dedup_strips_markdown(self, tmp_path):
         """Claims with markdown formatting differences should be deduped."""
-        from podcast_research.workspace.generators import _token_overlap, _prefix_overlap
+        from podcast_research.workspace.generators import (
+            _prefix_overlap,
+            _token_overlap,
+        )
         txt1 = "**AI agents are transforming enterprise workflows** with automation"
         txt2 = "AI agents are transforming enterprise workflows with automation"
         assert _token_overlap(txt1, txt2) > 0.5

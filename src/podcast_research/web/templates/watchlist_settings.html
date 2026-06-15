@@ -61,7 +61,7 @@
     {% if suggested_companies %}
     <p style="font-size:0.76rem;color:var(--muted);margin-top:10px">推荐:
         {% for s in suggested_companies[:8] %}
-        <a href="#" onclick="this.closest('form').querySelector('input').value='{{ s }}';return false" style="margin-right:6px">{{ s }}</a>
+        <a href="#" onclick="var i=this.closest('.section-card').querySelector('.add-form input[type=text]');if(i){i.value='{{ s }}';i.focus()};return false" style="margin-right:6px">{{ s }}</a>
         {% endfor %}
     </p>
     {% endif %}
@@ -111,7 +111,7 @@
     {% if suggested_topics %}
     <p style="font-size:0.76rem;color:var(--muted);margin-top:10px">推荐:
         {% for s in suggested_topics[:8] %}
-        <a href="#" style="margin-right:6px" onclick="this.closest('.section-card').querySelector('input').value='{{ s }}';return false">{{ s }}</a>
+        <a href="#" style="margin-right:6px" onclick="var i=this.closest('.section-card').querySelector('.add-form input[type=text]');if(i){i.value='{{ s }}';i.focus()};return false">{{ s }}</a>
         {% endfor %}
     </p>
     {% endif %}

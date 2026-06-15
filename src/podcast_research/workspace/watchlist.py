@@ -21,15 +21,26 @@ WATCHLIST_YAML = "Watchlist.yaml"
 # ── Alias / fuzzy maps ────────────────────────────────────────────
 
 COMPANY_ALIAS_MAP: dict[str, str] = {
+    # 中英文常见别名 → 官方名称
     "open ai": "OpenAI", "英伟达": "NVIDIA", "nividia": "NVIDIA",
-    "nivdia": "NVIDIA", "google": "Alphabet", "谷歌": "Alphabet",
-    "meta ai": "Meta", "微软": "Microsoft", "台积电": "TSMC",
+    "nivdia": "NVIDIA", "nvidia corporation": "NVIDIA",
+    "google": "Alphabet", "谷歌": "Alphabet", "google inc": "Alphabet",
+    "meta ai": "Meta", "facebook": "Meta", "微软": "Microsoft",
+    "台积电": "TSMC", "tsm": "TSMC",
     "core weave": "CoreWeave", "coreweave": "CoreWeave",
     "vercel ai": "Vercel", "anthropic ai": "Anthropic",
     "mistral ai": "Mistral", "shopify commerce": "Shopify",
     "salesforce crm": "Salesforce", "zendesk support": "Zendesk",
     "blackrock investment": "BlackRock", "vanguard group": "Vanguard",
     "perplexity ai": "Perplexity",
+    "amazon web services": "Amazon", "aws": "Amazon",
+    "deep seek": "DeepSeek", "deepseek ai": "DeepSeek",
+    "apple inc": "Apple", "intel corporation": "Intel",
+    "amd inc": "AMD", "advanced micro devices": "AMD",
+    "tesla inc": "Tesla", "spacex exploration": "SpaceX",
+    "oracle corporation": "Oracle", "palantir technologies": "Palantir",
+    "cloudflare inc": "Cloudflare", "databricks inc": "Databricks",
+    "anthropic ai safety": "Anthropic",
 }
 
 THEME_TOPIC_MAP: dict[str, list[str]] = {
@@ -126,19 +137,32 @@ def resolve_watchlist_name(
 
 
 def get_suggested_companies(snapshot) -> list[str]:
-    """Suggest companies for watchlist from vault."""
+    """Suggest companies for watchlist from filtered core companies.
+
+    Uses the same _NOT_A_COMPANY + entity_type filtering as core_companies()
+    to avoid suggesting non-company entities like products, models, concepts.
+    """
     from podcast_research.llm_wiki.context_builder import HIGH_VALUE_COMPANIES
     suggestions = []
-    for c in snapshot.companies:
-        if c.name in HIGH_VALUE_COMPANIES or len(c.source_reports) >= 2 or snapshot.claims_count_for(c.name) > 0 or snapshot.signals_count_for(c.name) > 0:
-            suggestions.append(c.name)
-    return sorted(set(suggestions))[:10]
+    # P2-N.4.4.1: Use filtered core_companies() instead of raw snapshot.companies
+    for c in snapshot.core_companies():
+        claims_n = snapshot.claims_count_for(c.name)
+        signals_n = snapshot.signals_count_for(c.name)
+        score = claims_n * 2 + signals_n * 3 + len(c.source_reports)
+        if score > 0 or c.name in HIGH_VALUE_COMPANIES:
+            suggestions.append((c.name, score))
+    suggestions.sort(key=lambda x: x[1], reverse=True)
+    return [name for name, _ in suggestions[:10]]
 
 
 def get_suggested_topics(snapshot) -> list[str]:
-    """Suggest topics for watchlist from core/active topics."""
+    """Suggest topics for watchlist from filtered core topics only.
+
+    Excludes generic/non-topic names already filtered by core_topics().
+    """
     scored = []
-    for t in snapshot.topics:
+    # P2-N.4.4.1: Only suggest from core_topics(), not raw snapshot.topics
+    for t in snapshot.core_topics():
         score = snapshot.claims_count_for(t.name) * 2 + snapshot.signals_count_for(t.name) * 1.5
         if score > 0 or t.status == "core":
             scored.append((t.name, score))
@@ -187,13 +211,37 @@ class WatchlistItemBrief:
 
 
 def load_watchlist(vault_path: Path) -> WatchlistConfig:
-    """Load watchlist from 99_System/Watchlist.yaml. Returns empty config if missing."""
+    """Load watchlist from 99_System/Watchlist.yaml. Auto-corrects known aliases.
+
+    Returns empty config if missing.
+    """
     path = vault_path / "99_System" / WATCHLIST_YAML
     if not path.exists():
         return WatchlistConfig()
     try:
         content = read_text_safe(path)
-        return _parse_watchlist_yaml(content)
+        config = _parse_watchlist_yaml(content)
+        # Auto-correct known company aliases
+        corrected = False
+        for i, name in enumerate(config.companies):
+            name_lower = name.lower()
+            if name_lower in COMPANY_ALIAS_MAP:
+                canonical = COMPANY_ALIAS_MAP[name_lower]
+                if canonical != name:
+                    config.companies[i] = canonical
+                    corrected = True
+                    logger.info("Watchlist: auto-corrected '%s' → '%s'", name, canonical)
+        if corrected:
+            # Deduplicate after correction
+            seen = set()
+            unique = []
+            for c in config.companies:
+                if c not in seen:
+                    seen.add(c)
+                    unique.append(c)
+            config.companies = unique
+            save_watchlist(vault_path, config)
+        return config
     except Exception:
         logger.warning("Failed to parse Watchlist.yaml, using empty config")
         return WatchlistConfig()
@@ -313,60 +361,100 @@ def _build_item_brief(
         item.card_exists = name in topic_names
 
     # Direct updates: claims/signals referencing this item
-    direct_claims = []
-    direct_signals = []
+    # P2-N.4.4.1: Canonical dedup + strip markdown/hashtags
+    from podcast_research.workspace.actionability import (
+        is_claim_fragment,
+        is_signal_fragment,
+    )
+    from podcast_research.workspace.canonicalize import (
+        normalize_claim_text,
+        normalize_signal_text,
+    )
+    direct_claims_texts: list[str] = []
+    direct_signals_texts: list[str] = []
+    seen_claim_fps: set[str] = set()
+    seen_signal_fps: set[str] = set()
+
     for c in snapshot.claims:
         if name in c.related_companies or name in c.related_topics:
-            direct_claims.append(c.claim[:100] if c.claim else c.card_id)
+            if is_claim_fragment(c):
+                continue
+            normalized = normalize_claim_text(c.claim)[:80]
+            fp = normalized[:60]
+            if fp not in seen_claim_fps:
+                seen_claim_fps.add(fp)
+                direct_claims_texts.append(normalized)
     for s in snapshot.signals:
         if name in s.related_companies or name in s.related_topics:
-            direct_signals.append(s.signal[:100] if s.signal else s.card_id)
+            if is_signal_fragment(s):
+                continue
+            normalized = normalize_signal_text(s.signal)[:80]
+            fp = normalized[:60]
+            if fp not in seen_signal_fps and fp not in seen_claim_fps:
+                seen_signal_fps.add(fp)
+                direct_signals_texts.append(normalized)
 
-    item.direct_items = direct_claims[:3] + direct_signals[:3]
-    item.direct_count = len(direct_claims) + len(direct_signals)
+    item.direct_items = direct_claims_texts[:3] + direct_signals_texts[:3]
+    item.direct_count = len(direct_claims_texts) + len(direct_signals_texts)
 
     # Indirect: check related topics / companies through the graph
-    indirect_claims = []
+    # P2-N.4.4.1: Dedup against direct items, normalize text
+    indirect_claims_set: set[str] = set()
     if item_type == "company":
-        # Company has related topics that are active
         for t in snapshot.topics:
             if t.name == name:
                 continue
-            # Check if claims mention both this company and an active topic
             for c in snapshot.claims:
                 if name in c.related_companies and t.name in c.related_topics:
                     if t.name in active_topic_names:
-                        indirect_claims.append(f"与升温主题「{t.name}」关联: {c.claim[:60]}")
+                        norm = normalize_claim_text(c.claim)[:60]
+                        fp = norm[:40]
+                        if fp not in seen_claim_fps:
+                            indirect_claims_set.add(
+                                f"与升温主题「{t.name}」关联: {norm}")
     elif item_type == "topic":
-        # Topic's related companies are active
-        for c in snapshot.companies:
-            if c.name == name:
+        for co in snapshot.companies:
+            if co.name == name:
                 continue
-            claim_count = snapshot.claims_count_for(c.name)
+            claim_count = snapshot.claims_count_for(co.name)
             if claim_count > 0:
                 for cl in snapshot.claims:
-                    if name in cl.related_topics and c.name in cl.related_companies:
-                        indirect_claims.append(f"与活跃公司「{c.name}」关联: {cl.claim[:60]}")
+                    if name in cl.related_topics and co.name in cl.related_companies:
+                        norm = normalize_claim_text(cl.claim)[:60]
+                        fp = norm[:40]
+                        if fp not in seen_claim_fps:
+                            indirect_claims_set.add(
+                                f"与活跃公司「{co.name}」关联: {norm}")
                         break
 
-    item.indirect_items = list(set(indirect_claims))[:3]
+    item.indirect_items = sorted(indirect_claims_set)[:3]
     item.indirect_count = len(item.indirect_items)
 
-    # Reinforced claims
+    # Reinforced claims (P2-N.4.4.1: normalized + deduped)
+    reinforced_fps: set[str] = set()
     reinforced = []
     for c in snapshot.claims:
         if name in c.related_companies or name in c.related_topics:
             if len(c.source_reports) >= 2:
-                reinforced.append(c.claim[:100] if c.claim else c.card_id)
+                norm = normalize_claim_text(c.claim)[:80]
+                fp = norm[:40]
+                if fp not in reinforced_fps and fp not in seen_claim_fps:
+                    reinforced_fps.add(fp)
+                    reinforced.append(norm)
     item.reinforced = reinforced[:3]
     item.reinforced_count = len(reinforced)
 
-    # Open observations
+    # Open observations (P2-N.4.4.1: exclude fragments + normalize)
     observations = []
+    obs_fps: set[str] = set()
     for s in snapshot.signals:
         if name in s.related_companies or name in s.related_topics:
-            if s.status in ("watching", "open"):
-                observations.append(s.signal[:100] if s.signal else s.card_id)
+            if s.status in ("watching", "open") and not is_signal_fragment(s):
+                norm = normalize_signal_text(s.signal)[:80]
+                fp = norm[:40]
+                if fp not in obs_fps and fp not in seen_signal_fps:
+                    obs_fps.add(fp)
+                    observations.append(norm)
     item.observations = observations[:5]
     item.observation_count = len(observations)
 
@@ -541,7 +629,7 @@ def save_watchlist(vault_path: Path, config: WatchlistConfig) -> Path:
 
 
 def add_watchlist_item(vault_path: Path, item_type: str, name: str) -> tuple[WatchlistConfig, str]:
-    """Add an item to watchlist. Returns (config, message)."""
+    """Add an item to watchlist. Auto-corrects known aliases. Returns (config, message)."""
     name = name.strip()
     if not name:
         return WatchlistConfig(), "名称不能为空"
@@ -552,11 +640,34 @@ def add_watchlist_item(vault_path: Path, item_type: str, name: str) -> tuple[Wat
     config = load_watchlist(vault_path)
     target = {"company": config.companies, "topic": config.topics, "theme": config.themes}[item_type]
 
-    if name in target:
+    # Resolve known aliases before adding
+    resolved_name = name
+    alias_msg = ""
+    if item_type == "company":
+        name_lower = name.lower()
+        if name_lower in COMPANY_ALIAS_MAP:
+            resolved_name = COMPANY_ALIAS_MAP[name_lower]
+            alias_msg = f"已将「{name}」自动纠正为「{resolved_name}」— "
+        elif name_lower in {k.lower(): k for k in COMPANY_ALIAS_MAP}:
+            # Already canonical, no correction needed
+            pass
+
+    # Check if canonical name already exists
+    if resolved_name in target:
+        if alias_msg:
+            return config, f"{alias_msg}「{resolved_name}」已在关注列表中"
         return config, f"「{name}」已在关注列表中"
 
-    target.append(name)
+    # Check if original name was already added under a different alias
+    if name != resolved_name and name in target:
+        target.remove(name)
+        if resolved_name in target:
+            return config, f"{alias_msg}「{resolved_name}」已在关注列表中"
+
+    target.append(resolved_name)
     save_watchlist(vault_path, config)
+    if alias_msg:
+        return config, f"{alias_msg}已添加至关注列表"
     return config, f"已添加「{name}」"
 
 

@@ -223,26 +223,31 @@
                     <span class="rec-icon">{{ r.icon }}</span>
                     <div class="rec-body">
                         <p class="rec-text">{{ r.text }}</p>
-                        <p class="rec-reason">{{ r.reason }}</p>
+                        <p class="rec-reason">{{ r.reason }}
+                        {% if r.status_label %}<span class="tag" style="font-size:0.7rem;margin-left:6px">{{ r.status_label }}</span>{% endif %}</p>
                     </div>
                     <div class="rec-action">
-                        {% if r.action == 'view_patch' %}
+                        {% if r.primary_action == 'view_patch' %}
                         <a href="/patches/{{ r.patch_id }}" class="btn-sm">查看</a>
-                        {% elif r.action == 'accept_claim' %}
+                        {% elif r.is_actionable and r.primary_action == 'accept' %}
                         <form method="post" action="{{ r.post_url }}" class="inline-form">
                             <input type="hidden" name="return_to" value="dashboard">
                             <input type="hidden" name="note" value="">
                             <button name="status" value="verified" class="btn-sm btn-sm-ok">采纳</button>
                             <button name="status" value="archived" class="btn-sm btn-sm-no">忽略</button>
                         </form>
-                        {% elif r.action == 'follow_signal' %}
+                        {% elif r.is_actionable and r.primary_action == 'follow' %}
                         <form method="post" action="{{ r.post_url }}" class="inline-form">
                             <input type="hidden" name="return_to" value="dashboard">
                             <input type="hidden" name="note" value="">
                             <button name="status" value="watching" class="btn-sm btn-sm-ok">关注</button>
                             <button name="status" value="archived" class="btn-sm btn-sm-no">忽略</button>
                         </form>
-                        {% elif r.action == 'view_report' %}
+                        {% elif r.status_label == '已在跟踪' %}
+                        <span class="btn-sm" style="opacity:0.6;cursor:default">已在跟踪</span>
+                        {% elif r.status_label == '已采纳' %}
+                        <span class="btn-sm" style="opacity:0.6;cursor:default">已采纳</span>
+                        {% elif r.primary_action == 'view_report' %}
                         <a href="/reports" class="btn-sm">查看</a>
                         {% endif %}
                     </div>

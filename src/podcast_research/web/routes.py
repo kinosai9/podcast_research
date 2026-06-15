@@ -93,10 +93,12 @@ def _batch_archive_similar(vault_path: Path, card_id: str, card_type: str, new_s
     Returns count of auto-archived items.
     """
     from podcast_research.claim_signal.review import (
-        _parse_frontmatter, update_claim_status, update_signal_status,
+        _parse_frontmatter,
+        update_claim_status,
+        update_signal_status,
     )
     from podcast_research.utils.file_io import read_text_safe
-    from podcast_research.workspace.generators import _strip_for_dedup, _token_overlap
+    from podcast_research.workspace.generators import _token_overlap
 
     # Read the source card to get its text
     dir_name = "06_Claims" if card_type == "claim" else "07_Signals"
@@ -112,8 +114,6 @@ def _batch_archive_similar(vault_path: Path, card_id: str, card_type: str, new_s
     source_text = source_fm.get("claim", "") or source_fm.get("signal", "") or ""
     if not source_text:
         return 0
-
-    source_stripped = _strip_for_dedup(source_text)
 
     # Scan all cards of same type for similar content
     target_dir = vault_path / dir_name
@@ -384,9 +384,9 @@ def _build_dashboard_context(vault_path: Path) -> dict:
         })
 
     from podcast_research.workspace.generators import (
+        _dedup_needs_review_items,
         _sort_claims_by_priority,
         _sort_signals_by_priority,
-        _dedup_needs_review_items,
     )
 
     # P2-N.4.3: Show needs-review items (critical + high priority)
@@ -436,11 +436,20 @@ def _build_dashboard_context(vault_path: Path) -> dict:
             "date": r.analyzed_at[:10] if r.analyzed_at else "?",
         })
 
-    # Build recommendations (rule-based, max 3)
-    recommendations = _build_recommendations(
-        pending_patches, review_claims, review_signals,
-        recent_reports, core_topics, summary,
-    )
+    # P2-N.4.4: Use canonicalization + actionability for recommendations
+    try:
+        from podcast_research.workspace.actionability import (
+            build_actionable_recommendations,
+        )
+        recommendations = build_actionable_recommendations(
+            snapshot, watchlist_config=wl_config, limit=3,
+        )
+    except Exception:
+        # Fallback to old logic
+        recommendations = _build_recommendations(
+            pending_patches, review_claims, review_signals,
+            recent_reports, core_topics, summary,
+        )
 
     # Build research brief (rule-based insights)
     try:

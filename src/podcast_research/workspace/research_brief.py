@@ -89,14 +89,26 @@ def generate_brief(snapshot: WorkspaceSnapshot) -> ResearchBrief:
     brief.active_companies = company_scores[:5]
 
     # ── Reinforced Claims (claims tied to multiple reports or core topics) ──
+    # P2-N.4.4: Canonical dedup — only show canonical claim per duplicate group
+    from podcast_research.workspace.canonicalize import (
+        group_duplicate_claims,
+        normalize_claim_text,
+    )
     core_topic_names = {t.name for t in snapshot.core_topics()}
+    claim_groups = group_duplicate_claims(snapshot.claims)
     reinforced = []
-    for c in snapshot.claims:
+    seen_fingerprints: set[str] = set()
+    for cg in claim_groups:
+        c = cg.canonical
         sr_count = len(c.source_reports)
         has_core_topic = any(t in core_topic_names for t in c.related_topics)
         if sr_count >= 2 or (has_core_topic and sr_count >= 1):
-            text = c.claim[:120] if c.claim else c.card_id
-            reinforced.append(text)
+            # P2-N.4.4: Use normalized clean text for display
+            text = normalize_claim_text(c.claim)[:120] if c.claim else c.card_id
+            fp = text[:80]  # fingerprint prefix
+            if fp not in seen_fingerprints:
+                seen_fingerprints.add(fp)
+                reinforced.append(text)
     brief.reinforced_claims = reinforced[:5]
 
     # ── New Signals (recently updated watching/open) ──
