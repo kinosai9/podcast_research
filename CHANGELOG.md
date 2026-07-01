@@ -1,5 +1,33 @@
 # Changelog
 
+## P2-S.3.5 — Source Ingestion Consistency & Release Hardening (2026-07-01)
+
+### Status & Action Label Unification
+- Added `SOURCE_STATUS_LABELS`, `ACTION_LABELS`, `SUGGESTED_ACTION_LABELS`, `TRACKING_ELIGIBILITY_LABELS` to `sources/models.py`
+- Unified 12 status labels: `preview_ready`→"待确认", `imported`→"已入库", `existing`→"已发现", `failed`→"失败", `degraded`→"解析退化"
+- Unified 11 action labels for buttons: `confirm_archive`→"确认归档", `batch_import`→"导入选中项", etc.
+- `ACTION_DESCRIPTIONS` keys changed from `ActionEnum` to `str` for simpler template usage
+- Updated 5 templates to use template variables instead of hardcoded text
+
+### Dashboard Statistics Consistency
+- Verified YouTube channel count ↔ active channels, tracked source count ↔ enabled sources, pending entries, URL/file previews, SourceArchive count all consistent with sub-pages
+
+### Skipped Test Recovery
+- `test_full_flow_preview_then_confirm` unskipped — root cause was Windows MAX_PATH (pytest temp dir + archive subdirs > 260 chars)
+- Fixed by using `tempfile.mkdtemp(prefix="v_")` for short vault path instead of `tmp_path / "v"`
+
+### Documentation
+- New `docs/SOURCE_INGESTION.md` — four entry points, unified processing pipeline, status/action labels, boundaries & limitations
+- Updated CLAUDE.md, ROADMAP.md, README.md, CHANGELOG.md, TODO.md, ARCHITECTURE.md, DEV_GUIDE.md
+
+### Naming & Boundary Audit
+- Confirmed `confirm_archive` only used for SourceArchive, `existing` only for tracked source entries
+- Verified Report not misused by web/file import, Deep Notes boundaries correct, LLM profiler stub safe
+- Unsupported tracked URLs correctly redirect to single URL import
+
+### Result
+- 1385 tests, ruff clean, 80 Python modules, 1 skipped test recovered
+
 ## P2-S.3.3 + P2-S.3.4 — File Upload & Unified Sources Dashboard (2026-06-30)
 
 ### P2-S.3.3: User Text File Upload Preview & Archive

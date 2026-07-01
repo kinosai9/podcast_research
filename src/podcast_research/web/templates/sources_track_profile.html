@@ -109,7 +109,7 @@
 <!-- ── Action ── -->
 <section class="source-card">
     <div class="card-body">
-        <h2 style="margin-top:0">建议操作: {{ profile.suggested_action.value }}</h2>
+        <h2 style="margin-top:0">建议操作: {{ suggested_action_labels.get(profile.suggested_action.value, profile.suggested_action.value) }}</h2>
 
         {% if profile.tracking_supported %}
         <p>该来源支持持续跟踪。创建跟踪源后，可通过"刷新"发现新内容并选择导入。</p>

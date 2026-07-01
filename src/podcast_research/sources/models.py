@@ -24,17 +24,76 @@ class ActionEnum(str, Enum):
     skip = "skip"
 
 
-# Human-readable descriptions for the UI
-ACTION_DESCRIPTIONS: dict[ActionEnum, str] = {
-    ActionEnum.import_as_deep_notes: "导入为深度精读笔记（Deep Notes）",
-    ActionEnum.import_as_deep_notes_linked: "导入为 Deep Notes 并关联已有投资报告",
-    ActionEnum.import_as_deep_notes_derived_only: "导入为独立 Deep Notes（无关联报告）",
-    ActionEnum.import_as_source_archive: "保存为来源归档",
-    ActionEnum.link_as_derived_source: "关联到已有报告（作为衍生来源）",
-    ActionEnum.archive_only: "仅归档（不做关联）",
-    ActionEnum.skip: "跳过不导入",
-    ActionEnum.overwrite_deep_notes: "覆盖已有 Deep Notes",
-    ActionEnum.confirm_archive: "确认归档至 SourceArchive",
+# ── P2-S.3.5: Unified Labels ─────────────────────────────────────────────────
+
+# Unified source/entry status → user-facing Chinese label
+# Same status must render the same text across Dashboard, list, detail, and preview pages.
+SOURCE_STATUS_LABELS: dict[str, str] = {
+    # entry states
+    "pending": "待处理",
+    "preview_ready": "待确认",
+    "new": "新发现",
+    "existing": "已发现",
+    "imported": "已入库",
+    "skipped": "已跳过",
+    "failed": "失败",
+    # source states
+    "active": "正常",
+    "degraded": "解析退化",
+    "disabled": "已禁用",
+    "unsupported": "暂不支持",
+    "needs_review": "需人工确认",
+    # dashboard card states
+    "idle": "暂无待处理",
+    "empty": "未配置",
+}
+
+# Unified action → short button label
+# Same action must render the same button text across all four entry pages.
+ACTION_LABELS: dict[str, str] = {
+    "preview": "生成预览",
+    "confirm_archive": "确认归档",
+    "import_as_source_archive": "归档为资料",
+    "import_as_deep_notes_linked": "导入为关联精读笔记",
+    "import_as_deep_notes_derived_only": "导入为独立精读笔记",
+    "skip": "跳过",
+    "overwrite_deep_notes": "覆盖精读笔记",
+    "refresh": "更新",
+    "batch_import": "导入选中项",
+    "back": "返回修改",
+    "use_single_url_import": "改用单网页导入",
+    "confirm_import": "确认导入",
+}
+
+# Human-readable descriptions for the UI (shown in action selector radio labels)
+ACTION_DESCRIPTIONS: dict[str, str] = {
+    "import_as_deep_notes": "导入为深度精读笔记（Deep Notes）",
+    "import_as_deep_notes_linked": "导入为关联精读笔记，关联已有投资报告",
+    "import_as_deep_notes_derived_only": "导入为独立精读笔记，不关联报告",
+    "import_as_source_archive": "归档为资料，保存内容至 SourceArchive",
+    "link_as_derived_source": "关联到已有报告，作为衍生来源",
+    "archive_only": "仅归档，不做关联",
+    "skip": "跳过，不写入任何内容",
+    "overwrite_deep_notes": "覆盖已有精读笔记（危险操作）",
+    "confirm_archive": "确认归档至 SourceArchive",
+}
+
+# Unified suggested action → user-facing label
+SUGGESTED_ACTION_LABELS: dict[str, str] = {
+    "create_tracked_source": "创建固定跟踪源",
+    "use_single_url_import": "改用单网页导入",
+    "use_rss_import_future": "RSS 导入（后续支持）",
+    "create_adapter_first": "需先创建适配器",
+    "unsupported": "暂不支持跟踪",
+}
+
+# Unified tracking eligibility → user-facing label
+TRACKING_ELIGIBILITY_LABELS: dict[str, str] = {
+    "supported": "支持跟踪",
+    "unsupported": "暂不支持",
+    "needs_adapter": "需适配器",
+    "low_confidence": "置信度低",
+    "manual_only": "仅手动导入",
 }
 
 

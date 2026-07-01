@@ -24,6 +24,9 @@ CLI (cli.py)  ←→  Web Console (web/)  ←→  API (api/)
    adapters/        analysis/        llm/
    (data input)    (pipeline)     (LLM providers)
         │               │               │
+        │               │          sources/
+        │               │     (ingestion pipeline)
+        │               │               │
         └───────────────┼───────────────┘
                         │
                    db/ (SQLAlchemy + SQLite)
@@ -70,7 +73,7 @@ Model provider abstraction only. Does NOT handle data source logic.
 
 ### db/ — Data Layer
 
-6 core tables: reports, investment_views, entities, tracking_signals, channels, channel_videos.
+8 core tables: reports, investment_views, entities, tracking_signals, channels, channel_videos, tracked_sources, tracked_source_entries.
 
 - `repository.py` — read/write queries
 - `channel_repository.py` — channel/video queries + metadata lookup
@@ -91,6 +94,18 @@ HTML pages served by the same FastAPI app. `web/` and `api/` are separated: api 
 - `job_service.py` — background job queue management
 - `sync_service.py` — knowledge sync (report → Obsidian)
 - `watchlist_matcher.py` — watchlist-based video matching
+
+### sources/ — Source Ingestion Pipeline (P2-S.3)
+
+- `models.py` — unified data models (ActionEnum, ImportPreview, SourceProfile, FileImportPreview, status/action labels)
+- `import_preview.py` — URL import preview & confirm logic
+- `file_profile.py` — uploaded file validation & profiling
+- `file_content_extractor.py` — text extraction from .md/.txt/.html/.htm
+- `file_import_preview.py` — file import preview & confirm (→ SourceArchive)
+- `conflict_detector.py` — dedup engine (content_hash, title, URL; scans SourceArchive/DeepNotes/ReportMaterial)
+- `source_profiler.py` — rule-based URL profiling for tracking eligibility
+- `llm_source_profiler.py` — LLM profiler stub (no real calls)
+- `tracked_source_service.py` — tracked source refresh & import orchestration
 
 ### exporters/ — Output
 

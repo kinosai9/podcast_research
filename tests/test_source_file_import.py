@@ -882,17 +882,56 @@ class TestFileImportWebRoutes:
         )
         assert response.status_code in (302, 303)
 
-    @pytest.mark.skip(reason=(
-        "Full web flow requires precise vault path configuration that conflicts "
-        "with the autouse _isolate_config_store fixture's monkeypatch of "
-        "_get_settings_path. All core logic (profile, extract, eligibility, "
-        "conflict detection, confirm_file_import) is already tested directly."
-    ))
-    def test_full_flow_preview_then_confirm(self, api_client, configured_vault):
-        """End-to-end: upload txt → preview → confirm → file written.
-        NOTE: skipped due to config_store fixture interaction.
+    def test_full_flow_preview_then_confirm(self, api_client, monkeypatch):
+        """End-to-end: upload txt → preview → confirm → file written to SourceArchive.
+
+        P2-S.3.5: Uses monkeypatch.setenv directly (not configured_vault) to keep
+        the vault path short enough to avoid Windows MAX_PATH issues with long
+        test function names + archive subdirectories.
         """
-        pass
+        import tempfile
+        td = Path(tempfile.mkdtemp(prefix="v_"))
+        try:
+            monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(td))
+            text = b"Full flow test content for archive. " * 60
+
+            # Step 1: Upload file, get preview
+            preview_resp = api_client.post(
+                "/sources/files/preview",
+                files={"file": ("fullflow.txt", text, "text/plain")},
+                follow_redirects=False,
+            )
+            assert preview_resp.status_code == 200
+            html = preview_resp.text
+            assert "预览" in html or "preview" in html.lower()
+
+            import re
+            m = re.search(r'name="preview_id"\s+value="([^"]+)"', html)
+            assert m, "preview_id not found in preview page"
+            preview_id = m.group(1)
+
+            # Step 2: Confirm with archive action
+            confirm_resp = api_client.post(
+                "/sources/files/confirm",
+                data={"preview_id": preview_id, "action": "confirm_archive"},
+                follow_redirects=False,
+            )
+            assert confirm_resp.status_code in (302, 303)
+            redirect_url = confirm_resp.headers.get("location", "")
+            assert "error" not in redirect_url, \
+                f"Confirm redirected with error: {redirect_url}"
+
+            # Step 3: Verify file was written to SourceArchive
+            archive_dir = td / "01_Reports" / "SourceArchive"
+            md_files = list(archive_dir.glob("*.md"))
+            assert len(md_files) >= 1, "No .md file created in SourceArchive"
+
+            # Step 4: Verify archived content
+            content = md_files[0].read_text(encoding="utf-8")
+            assert "Full flow test content" in content
+        finally:
+            import shutil
+            shutil.rmtree(td, ignore_errors=True)
 
     def test_skip_action_no_vault_write(self, api_client, configured_vault):
         """Skip action should not write to vault."""

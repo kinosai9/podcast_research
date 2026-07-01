@@ -10,7 +10,7 @@ cp .env.example .env   # edit if using real LLM
 ## Run Tests
 
 ```bash
-python -m pytest tests/ -v              # all 904 tests (mock, no API calls)
+python -m pytest tests/ -v              # all 1385 tests (mock, no API calls)
 python -m pytest tests/ -x              # stop on first failure
 python -m pytest tests/test_cli.py -v   # specific file
 ```

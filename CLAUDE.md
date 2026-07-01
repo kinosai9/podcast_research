@@ -7,7 +7,7 @@
 
 ## 当前阶段
 
-**P2-S External Sources + Deep Notes Export。** P0–P2 (A–S) 已交付，1261 tests（含 26 job persistence + 7 Playwright UI smoke），58 个 Python 模块，9 个 CLI 命令组。
+**P2-S Sources + Deep Notes Export。** P0–P2 (A–S) 已交付，1385 tests（含 26 job persistence + 7 Playwright UI smoke），80 个 Python 模块，9 个 CLI 命令组。
 
 CI：GitHub Actions 自动 pytest + ruff lint。详细路线见 `docs/ROADMAP.md`，变更记录见 `CHANGELOG.md`。
 
@@ -17,10 +17,11 @@ CI：GitHub Actions 自动 pytest + ruff lint。详细路线见 `docs/ROADMAP.md
 adapters/  → 数据源适配（字幕 → TranscriptSegment）
 llm/       → 模型供应商适配（prompt → JSON/Markdown）
 analysis/  → 分析流水线（解析 → 清洗 → 抽取 → 渲染 → 入库）
-db/        → SQLAlchemy + SQLite（6 表）
+db/        → SQLAlchemy + SQLite（8 表）
 api/       → FastAPI 只读 JSON API
-web/       → Jinja2 HTML 页面（20 模板）
+web/       → Jinja2 HTML 页面（20+ 模板）
 services/  → 业务编排（analyze/job/sync/watchlist）
+sources/   → 信息源摄入管道（导入预览/跟踪源/文件上传/冲突检测）
 exporters/ → Obsidian Vault 导出
 llm_wiki/  → LLM-WIKI Patch Review 生命周期
 workspace/ → Vault 管理（dashboard/curation/backfill）
@@ -39,7 +40,7 @@ workspace/ → Vault 管理（dashboard/curation/backfill）
 ## 测试规则
 
 ```bash
-python -m pytest tests/ -v    # 1261 tests（含 7 UI smoke），全部使用 mock provider
+python -m pytest tests/ -v    # 1385 tests（含 7 UI smoke），全部使用 mock provider
 python -m pytest tests/ -q    # 快速模式
 python -m pytest tests/test_ui_smoke.py -v  # UI smoke tests（需要 playwright）
 ```
@@ -98,5 +99,6 @@ python -m podcast_research --youtube-url "URL" --focus "AI投资" --no-mock
 | `docs/ARCHITECTURE.md` | 开发者 | 分层架构、模块边界 |
 | `docs/ROADMAP.md` | 规划 | 已完成/计划中阶段 |
 | `docs/DEV_GUIDE.md` | 开发者 | 环境、测试、命令速查 |
+| `docs/SOURCE_INGESTION.md` | 开发者 | Sources 模块目标、入口、流程、边界 |
 | `CHANGELOG.md` | 记录 | 阶段完成日志 |
 | `TODO.md` | 追踪 | 待办项 |

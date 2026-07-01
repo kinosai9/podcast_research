@@ -61,15 +61,15 @@
             <div class="filter-pills">
                 <a href="?" class="filter-pill {% if not current_status %}active{% endif %}">全部</a>
                 <a href="?status=preview_ready"
-                   class="filter-pill {% if current_status == 'preview_ready' %}active{% endif %}">待导入</a>
+                   class="filter-pill {% if current_status == 'preview_ready' %}active{% endif %}">{{ entry_status_labels.get('preview_ready', '待确认') }}</a>
                 <a href="?status=imported"
-                   class="filter-pill {% if current_status == 'imported' %}active{% endif %}">已导入</a>
+                   class="filter-pill {% if current_status == 'imported' %}active{% endif %}">{{ entry_status_labels.get('imported', '已入库') }}</a>
                 <a href="?status=new"
-                   class="filter-pill {% if current_status == 'new' %}active{% endif %}">新发现</a>
+                   class="filter-pill {% if current_status == 'new' %}active{% endif %}">{{ entry_status_labels.get('new', '新发现') }}</a>
                 <a href="?status=failed"
-                   class="filter-pill {% if current_status == 'failed' %}active{% endif %}">解析失败</a>
+                   class="filter-pill {% if current_status == 'failed' %}active{% endif %}">{{ entry_status_labels.get('failed', '失败') }}</a>
                 <a href="?status=existing"
-                   class="filter-pill {% if current_status == 'existing' %}active{% endif %}">已存在</a>
+                   class="filter-pill {% if current_status == 'existing' %}active{% endif %}">{{ entry_status_labels.get('existing', '已发现') }}</a>
                 <a href="?status=skipped"
                    class="filter-pill {% if current_status == 'skipped' %}active{% endif %}">已跳过</a>
             </div>
@@ -81,8 +81,8 @@
                     {% if e.status == 'imported' %}{% set ns.ni = ns.ni + 1 %}{% endif %}
                     {% if e.status == 'failed' %}{% set ns.nf = ns.nf + 1 %}{% endif %}
                 {% endfor %}
-                {% if ns.npr %}<span> · 待导入 <strong>{{ ns.npr }}</strong></span>{% endif %}
-                {% if ns.ni %}<span> · 已导入 <strong>{{ ns.ni }}</strong></span>{% endif %}
+                {% if ns.npr %}<span> · {{ entry_status_labels.preview_ready }} <strong>{{ ns.npr }}</strong></span>{% endif %}
+                {% if ns.ni %}<span> · {{ entry_status_labels.imported }} <strong>{{ ns.ni }}</strong></span>{% endif %}
                 {% if ns.nf %}<span> · 失败 <strong>{{ ns.nf }}</strong></span>{% endif %}
             </div>
         </div>
@@ -97,17 +97,17 @@
         <form method="post" action="/sources/tracked/{{ source.id }}/import"
               id="batch-import-form">
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                <span style="font-weight:600">{{ preview_ready_entries|length }} 条待导入</span>
+                <span style="font-weight:600">{{ preview_ready_entries|length }} 条{{ entry_status_labels.preview_ready }}</span>
                 <input type="hidden" name="entry_ids" id="batch-entry-ids" value="">
                 <select name="action" style="width:auto">
-                    <option value="import_as_deep_notes_derived_only">导入为独立 Deep Notes</option>
-                    <option value="import_as_deep_notes">导入为 Deep Notes</option>
-                    <option value="import_as_deep_notes_linked">导入为 Deep Notes 并关联报告</option>
-                    <option value="import_as_source_archive">保存为来源归档</option>
+                    <option value="import_as_deep_notes_derived_only">导入为独立精读笔记</option>
+                    <option value="import_as_deep_notes">导入为精读笔记</option>
+                    <option value="import_as_deep_notes_linked">导入为关联精读笔记</option>
+                    <option value="import_as_source_archive">归档为资料</option>
                 </select>
                 <button type="submit" class="btn btn-primary"
                         onclick="collectSelectedEntries(event)">
-                    导入选中
+                    导入选中项
                 </button>
             </div>
         </form>
@@ -166,7 +166,7 @@
                 <button type="submit" class="btn btn-ghost btn-sm">跳过</button>
             </form>
             {% elif e.status == 'imported' %}
-            <span style="font-size:0.74rem;color:var(--muted)">✓ 已导入</span>
+            <span style="font-size:0.74rem;color:var(--muted)">✓ {{ entry_status_labels.imported }}</span>
             {% elif e.status == 'failed' %}
             {% if e.error_message %}
             <div class="video-fail-reason" title="{{ e.error_message }}">
@@ -179,7 +179,7 @@
                 <button type="submit" class="btn btn-ghost btn-sm">忽略</button>
             </form>
             {% elif e.status == 'existing' %}
-            <span style="font-size:0.74rem;color:var(--muted)">已存在</span>
+            <span style="font-size:0.74rem;color:var(--muted)">{{ entry_status_labels.existing }}</span>
             {% elif e.status == 'skipped' %}
             <span style="font-size:0.74rem;color:var(--muted)">已跳过</span>
             {% endif %}
@@ -207,7 +207,7 @@ function collectSelectedEntries(event) {
     boxes.forEach(function(b) { ids.push(b.value); });
     if (ids.length === 0) {
         event.preventDefault();
-        alert('请至少选择一条待导入条目');
+        alert('请至少选择一条待确认条目');
         return;
     }
     document.getElementById('batch-entry-ids').value = ids.join(',');

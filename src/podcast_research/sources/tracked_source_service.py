@@ -213,8 +213,8 @@ def refresh_tracked_source(
     return {
         "success": True,
         "message": (
-            f"发现 {new_count} 条新内容，{existing_count} 条已存在"
-            + (f"，{failed_count} 条解析失败" if failed_count > 0 else "")
+            f"发现 {new_count} 条新内容，{existing_count} 条已发现"
+            + (f"，{failed_count} 条失败" if failed_count > 0 else "")
         ),
         "total_on_page": len(entries),
         "new_entries": new_count,

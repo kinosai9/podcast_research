@@ -21,9 +21,9 @@
             </p>
         </div>
         {% if preview.import_eligible %}
-        <span class="count-badge" style="flex-shrink:0;background:#16a34a;color:#fff;padding:4px 10px;border-radius:12px;font-size:0.8rem;font-weight:700">可入库</span>
+        <span class="count-badge" style="flex-shrink:0;background:#16a34a;color:#fff;padding:4px 10px;border-radius:12px;font-size:0.8rem;font-weight:700">可归档</span>
         {% else %}
-        <span class="count-badge" style="flex-shrink:0;background:#dc2626;color:#fff;padding:4px 10px;border-radius:12px;font-size:0.8rem;font-weight:700">不可入库</span>
+        <span class="count-badge" style="flex-shrink:0;background:#dc2626;color:#fff;padding:4px 10px;border-radius:12px;font-size:0.8rem;font-weight:700">不可归档</span>
         {% endif %}
     </div>
 
@@ -58,7 +58,7 @@
         </tr>
         <tr>
             <td style="color:var(--muted);padding:3px 8px 3px 0;white-space:nowrap">推荐归档类型</td>
-            <td style="padding:3px 0"><code style="font-size:0.8rem">{{ preview.recommended_action.value }}</code></td>
+            <td style="padding:3px 0"><code style="font-size:0.8rem">{{ action_labels.get(preview.recommended_action.value, preview.recommended_action.value) }}</code></td>
         </tr>
         {% if preview.recommended_path %}
         <tr>
@@ -147,7 +147,7 @@
                            {% if is_confirm_rec %}checked{% endif %}
                            style="margin-top:3px;flex-shrink:0">
                     <div>
-                        <strong style="font-size:0.9rem">确认入库</strong>
+                        <strong style="font-size:0.9rem">确认归档</strong>
                         {% if is_confirm_rec %}<span style="font-size:0.7rem;background:var(--accent);color:#fff;padding:2px 6px;border-radius:4px;margin-left:4px">推荐</span>{% endif %}
                         <p class="form-help" style="margin:4px 0 0;font-size:0.8rem">将文件内容写入 SourceArchive，文件名自动 sanitize。</p>
                     </div>
@@ -173,9 +173,9 @@
 
         <div class="form-actions" style="margin-top:20px">
             {% if preview.import_eligible and has_confirm %}
-            <button type="submit" class="btn-action">确认入库</button>
+            <button type="submit" class="btn-action">确认归档</button>
             {% elif has_skip %}
-            <p style="color:var(--text-soft);font-size:0.85rem">该文件不符合入库条件，无法执行确认入库操作。</p>
+            <p style="color:var(--text-soft);font-size:0.85rem">该文件不符合入库条件，无法执行确认归档操作。</p>
             {% endif %}
             <a href="/sources/files/import" class="btn-action btn-secondary">返回重新上传</a>
         </div>

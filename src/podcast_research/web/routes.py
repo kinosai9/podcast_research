@@ -1555,7 +1555,7 @@ def _build_sources_dashboard_context(vault_path_str: str) -> dict:
             "description": "跟踪固定外部网页源（如 All-In Podcast 笔记），自动发现新条目。",
             "count_label": f"{tracked_count} 个信息源",
             "count_detail": (
-                f"{tracked_pending_entries} 条待导入"
+                f"{tracked_pending_entries} 条待确认"
                 if tracked_pending_entries > 0 else ""
             ),
             "status": (
@@ -1761,22 +1761,24 @@ _PRIORITY_LABELS = {
     "archive": "归档",
 }
 
-# P2-S.3.2: Tracked source status labels
-_TRACKED_SOURCE_STATUS_LABELS = {
-    "active": "正常",
-    "degraded": "部分失败",
-    "failed": "异常",
-    "disabled": "已禁用",
-}
+# P2-S.3.5: Status labels derived from unified SOURCE_STATUS_LABELS.
+# Deferred import to avoid E402 (module-level import after non-import code).
+def _build_status_labels():
+    from podcast_research.sources.models import SOURCE_STATUS_LABELS
+    return {
+        "tracked_source": {
+            k: SOURCE_STATUS_LABELS[k]
+            for k in ("active", "degraded", "failed", "disabled")
+        },
+        "tracked_entry": {
+            k: SOURCE_STATUS_LABELS[k]
+            for k in ("new", "existing", "preview_ready", "imported", "skipped", "failed")
+        },
+    }
 
-_TRACKED_ENTRY_STATUS_LABELS = {
-    "new": "新发现",
-    "existing": "已存在",
-    "preview_ready": "待导入",
-    "imported": "已导入",
-    "skipped": "已跳过",
-    "failed": "解析失败",
-}
+_STATUS_LABELS = _build_status_labels()
+_TRACKED_SOURCE_STATUS_LABELS = _STATUS_LABELS["tracked_source"]
+_TRACKED_ENTRY_STATUS_LABELS = _STATUS_LABELS["tracked_entry"]
 
 
 @router.get("/sources/channels")
@@ -2370,16 +2372,15 @@ def action_source_import_preview(
 
     _preview_store[preview.preview_id] = preview
 
-    # Action descriptions for the template
-    from podcast_research.sources.models import ACTION_DESCRIPTIONS
+    # Action labels and descriptions for the template
+    from podcast_research.sources.models import ACTION_DESCRIPTIONS, ACTION_LABELS
 
     ctx = {
         "request": request,
         "preview": preview,
         "vault_path": vault_path_str,
-        "action_descriptions": {
-            a.value: d for a, d in ACTION_DESCRIPTIONS.items()
-        },
+        "action_labels": dict(ACTION_LABELS),
+        "action_descriptions": dict(ACTION_DESCRIPTIONS),
     }
     ctx.update(_flash(request))
     return _render("source_import_preview.html", ctx)
@@ -2502,6 +2503,10 @@ def action_sources_tracked_profile(
         return RedirectResponse(
             url="/sources/tracked/add?msg=error:请输入首页 URL", status_code=303)
 
+    from podcast_research.sources.models import (
+        SUGGESTED_ACTION_LABELS,
+        TRACKING_ELIGIBILITY_LABELS,
+    )
     from podcast_research.sources.source_profiler import profile_source_url
 
     profile = profile_source_url(url)
@@ -2518,6 +2523,8 @@ def action_sources_tracked_profile(
         "profile": profile,
         "profile_id": profile_id,
         "source_name": name.strip() or profile.provider or profile.domain,
+        "suggested_action_labels": dict(SUGGESTED_ACTION_LABELS),
+        "tracking_eligibility_labels": dict(TRACKING_ELIGIBILITY_LABELS),
     }
     ctx.update(_flash(request))
     return _render("sources_track_profile.html", ctx)
@@ -2949,10 +2956,14 @@ async def action_source_file_preview(
     # Store temp path for confirm step (attached to preview)
     preview._temp_path = tmp_path  # type: ignore[attr-defined]
 
+    from podcast_research.sources.models import ACTION_DESCRIPTIONS, ACTION_LABELS
+
     ctx = {
         "request": request,
         "preview": preview,
         "vault_path": vault_path_str,
+        "action_labels": dict(ACTION_LABELS),
+        "action_descriptions": dict(ACTION_DESCRIPTIONS),
     }
     ctx.update(_flash(request))
     return _render("source_file_import_preview.html", ctx)

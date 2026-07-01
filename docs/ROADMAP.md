@@ -27,8 +27,13 @@
 | P2-S.1 | External Derived Source Adapter (allin_zh_notes, generic web) | ✅ |
 | P2-S.2 | Deep Notes Export & Episode Linking + fetch reliability | ✅ |
 | P2-S.3.1 | Generic Web URL Import Preview (adapter, conflict detector, UI) | ✅ |
+| P2-S.3.2 | Trackable External Source + Tracked Source Service | ✅ |
+| P2-S.3.2.1 | Source Profiling & Tracking Eligibility | ✅ |
+| P2-S.3.3 | User Text File Upload Preview & Archive | ✅ |
+| P2-S.3.4 | Unified Sources Dashboard & Navigation | ✅ |
+| P2-S.3.5 | Source Ingestion Consistency & Release Hardening | ✅ |
 
-**Current: 1261 tests, 58 Python modules, 9 CLI command groups.**
+**Current: 1385 tests, 80 Python modules, 9 CLI command groups.**
 
 ## Planned
 

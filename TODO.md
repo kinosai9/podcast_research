@@ -8,7 +8,12 @@
 - [x] P2-S.2: Deep Notes Export & Episode Linking
 - [x] P2-S.2.2: External Fetch Reliability（retry engine + error classification）
 - [x] P2-S.3.1: Generic Web URL Import Preview（adapter, conflict detector, UI）
-- [x] 1261 tests, ruff clean
+- [x] P2-S.3.2: Trackable External Source + Tracked Source service
+- [x] P2-S.3.2.1: Source Profiling & Tracking Eligibility
+- [x] P2-S.3.3: User Text File Upload Preview & Archive
+- [x] P2-S.3.4: Unified Sources Dashboard & Navigation
+- [x] P2-S.3.5: Source Ingestion Consistency & Release Hardening（状态文案/按钮统一、跳过测试修复、文档补齐）
+- [x] 1385 tests, ruff clean
 
 ## 待完成
 
@@ -29,7 +34,8 @@
 - [ ] P2-S.2.1: validate_deep_notes_import 第 5 个 episode 导入失败的跟进（4/5 成功）
 - [ ] External adapter 扩展（除 All-In Podcast 外的其他中文资讯站点）
 - [ ] GenericWebPageAdapter 正文提取精度优化（当前 best-effort）
-- [ ] Source Import 预测览页面错误状态覆盖（network failure, parse error 等）
+- [ ] 持久化 import queue（替换内存 `_preview_store`）
+- [ ] RSS/Atom Feed Adapter
 
 ### 手动验证项
 

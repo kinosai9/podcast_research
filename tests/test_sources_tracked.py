@@ -362,7 +362,7 @@ class TestTrackedSourceRefresh:
         resp2 = api_client.get(f"/sources/tracked/{ts_id}/entries")
         assert resp2.status_code == 200
         # 3 episodes from homepage, all should be preview_ready after refresh
-        assert "待导入" in resp2.text
+        assert "待确认" in resp2.text
 
     def test_refresh_marks_existing_entries(self, api_client, monkeypatch):
         """Second refresh marks previously-discovered entries as existing."""
@@ -382,7 +382,7 @@ class TestTrackedSourceRefresh:
         )
         assert resp.status_code == 303
         decoded = unquote(resp.headers["location"])
-        assert "已存在" in decoded
+        assert "已发现" in decoded
 
     def test_refresh_no_duplicate_entries(self, api_client, monkeypatch):
         """Two refreshes shouldn't create duplicate entry rows."""

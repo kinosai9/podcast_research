@@ -417,11 +417,11 @@ class TestDashboardIntegration:
     """Dashboard should show link to /sources/channels."""
 
     def test_dashboard_shows_sources_link(self, api_client):
-        """Dashboard action bar should have '信息源' link."""
+        """Dashboard nav should have '信息源' link pointing to /sources."""
         resp = api_client.get("/dashboard")
         assert resp.status_code == 200
         html = resp.text
-        assert "/sources/channels" in html
+        assert "/sources" in html
         assert "信息源" in html
 
 
