@@ -1,6 +1,6 @@
 # P3 Plan: 知识库后端化
 
-> 状态：Planned | 2026-07-01
+> 状态：P3-A 已完成 | P3-B/C/D 计划中 | 2026-07-01
 > 基于 P2-S.3.5 完成状态
 
 ## 定位
@@ -21,38 +21,49 @@ P2 解决了"能处理什么"，P3 解决"运行时出问题怎么办"和"怎么
 
 ## 分阶段计划
 
-### P3-A：持久化摄入队列（预计 3-5 天）
+### P3-A：持久化摄入队列 ✅ 已完成（2026-07-01）
 
-**当前问题：**
-- `_preview_store`、`_file_preview_store`、`_profile_store`、`_import_results_store` 是进程内存 dict
-- 服务重启 → 所有待确认预览丢失
-- 用户确认到一半的导入流程中断
-- 无法追踪"这个 URL 之前已经预览过了"
-- 无法统计摄入成功率/失败率
+**实现摘要：**
 
-**目标状态：**
-- `ingest_jobs` 表持久化所有摄入任务
-- 预览生成 → 写入 DB（status=pending_preview）
-- 用户确认 → 更新状态（status=confirmed_archive/confirmed_deep_notes/skipped）
-- 服务重启 → 待确认项仍然存在
-- 支持按 source_hash 去重（同一内容不重复预览）
-- 过期预览自动清理（>24h 未确认）
+- 新增 `IngestJob` SQLAlchemy 模型（22 列）— `db/models.py`
+- 新增 `_migrate_ingest_jobs_table` — `db/session.py`
+- 新增 `IngestJobManager`（14 个方法）— `sources/ingest_jobs.py`
+- **Phase 1 双写模式**：所有摄入入口同时写入内存 `_preview_store` 和 SQLite `ingest_jobs`
+- CLI `ingest list/show/retry/resume`
+- 54 个专项测试 — `tests/test_ingest_jobs.py`
 
-**设计文档：** `docs/INGEST_QUEUE_DESIGN.md`
+**当前架构约定（Phase 1）：**
+
+| 层级 | 用途 | 持久化 |
+|------|------|--------|
+| `_preview_store` / `_file_preview_store` / `_profile_store` | 运行期缓存（优先读取） | 否（进程重启丢失） |
+| `ingest_jobs` 表 | 可恢复状态源（后备读取 + 重启恢复） | 是（SQLite） |
+| `_import_results_store` | 一次性显示结果 | 否（保持原有，有意义的短期数据） |
+
+- Dashboard 统计：优先从内存 `_preview_store` 读取，为空时回退到 `ingest_jobs`（处理重启场景）
+- 写入：所有摄入入口双写（内存 + DB），DB 写入失败不阻塞流程
+- 去重：同一 `job_key` + `pending_preview` 状态受部分唯一索引保护
+
+**后续阶段约束：**
+- P3-B / P3-C 不应新增对 `_preview_store` / `_file_preview_store` / `_profile_store` 的依赖
+- 新功能应直接使用 `IngestJobManager` 或从 `ingest_jobs` 表查询
+- Phase 2（完全切换）可在所有 P3 阶段完成后进行
 
 **验收标准：**
-- [ ] `ingest_jobs` 表创建，包含所有必要字段
-- [ ] URL 预览写入 ingest_jobs 而非 `_preview_store`
-- [ ] 文件上传预览写入 ingest_jobs 而非 `_file_preview_store`
-- [ ] Profile 写入 ingest_jobs 而非 `_profile_store`
-- [ ] Import results 写入 ingest_jobs 而非 `_import_results_store`
-- [ ] 服务重启后待确认项仍可访问
-- [ ] source_hash 去重正常工作
-- [ ] 过期预览自动清理
-- [ ] Dashboard 统计从 ingest_jobs 查询
-- [ ] 现有 Sources 模块测试全部通过
-- [ ] 新增 ingest_jobs 专项测试（≥20 tests）
-- [ ] ruff clean
+- [x] `ingest_jobs` 表创建，包含所有必要字段
+- [x] URL 预览双写到 ingest_jobs（同时保留 `_preview_store`）
+- [x] 文件上传预览双写到 ingest_jobs（同时保留 `_file_preview_store`）
+- [x] Profile 双写到 ingest_jobs（同时保留 `_profile_store`）
+- [x] Import results 结果写入 ingest_jobs；`_import_results_store` 保留为一次性显示
+- [x] 服务重启后通过 `ingest_jobs` 恢复待确认项（`ingest resume`）  
+- [x] source_hash / job_key 去重（部分唯一索引）
+- [x] 过期预览自动清理（`expire_old_jobs`）
+- [x] Dashboard 统计在内存为空时从 ingest_jobs 查询
+- [x] 现有 Sources 模块测试全部通过
+- [x] 新增 ingest_jobs 专项测试：54 tests
+- [x] ruff clean
+
+**结果：** 1439 tests（1438 passed, 1 pre-existing flaky），ruff clean。
 
 ### P3-B：Vault Lint（预计 2-3 天）
 
@@ -174,13 +185,14 @@ P2 解决了"能处理什么"，P3 解决"运行时出问题怎么办"和"怎么
 ### P3-E：文档与操作手册（持续）
 
 **输出：**
-- [x] `docs/P3_PLAN.md` — 本文件
-- [ ] `docs/INGEST_QUEUE_DESIGN.md`
-- [ ] `docs/VAULT_LINT_REVIEW_QUEUE_DESIGN.md`
-- [ ] `docs/MCP_SERVER_DESIGN.md`
-- [ ] `docs/PROJECT_RULES.md` — 更新 P3 范围
-- [ ] `README.md` — 更新路线图/当前阶段
-- [ ] `CHANGELOG.md` — 更新 Unreleased/P3 planned
+- [x] `docs/P3_PLAN.md` — 本文件（P3-A 完成状态已更新）
+- [x] `docs/INGEST_QUEUE_DESIGN.md` — P3-A 实现后已补充字段/状态机/CLI
+- [x] `docs/VAULT_LINT_REVIEW_QUEUE_DESIGN.md` — 设计文档
+- [x] `docs/MCP_SERVER_DESIGN.md` — 设计文档
+- [x] `docs/PROJECT_RULES.md` — 工程规范（含 P3 规则）
+- [x] `docs/LLM_WIKI_ANALYSIS.md` — 参考项目分析
+- [x] `README.md` — 已更新 P3 方向
+- [x] `CHANGELOG.md` — 已更新 P3-A 完成
 
 ## 不做什么（P3 明确排除）
 

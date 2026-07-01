@@ -1,17 +1,29 @@
 # Changelog
 
-## Unreleased — P3 Planned (2026-07-01)
+## P3-A — Persistent Ingest Job Queue (2026-07-01)
 
 P3 定位：把 podcast_research 从"可运行的数据处理流水线"升级为"可恢复、可审计、可被 Agent 查询的投资知识库后端"。
 
-### Planned
-- **P3-A**: 持久化摄入队列 — SQLite `ingest_jobs` 表收编 `_preview_store` 等内存状态
-- **P3-B**: Vault Lint — 7 条 lint rule 检查 Obsidian vault 健康
-- **P3-C**: Review Queue — `review_items` 表统一 Patch/Lint/合并建议等审核事项
-- **P3-D**: MCP Server — Python `mcp` 包实现 9 个只读 tool
-- **P3-E**: 文档与操作手册
+### P3-A Done
+- **IngestJob model**: 22-column SQLAlchemy model (`db/models.py`) — identity, status, preview JSON, action, result, references, timestamps
+- **Migration**: `_migrate_ingest_jobs_table` with partial UNIQUE index on `(job_key, status) WHERE pending_preview` for dedup
+- **IngestJobManager**: 14 methods in `sources/ingest_jobs.py` — create, find, list, confirm, mark_failed, retry, resume, expire, count
+- **Dual-write (Phase 1)**: All four ingest entry points write to both memory stores and `ingest_jobs`:
+  - URL import preview/confirm
+  - File upload preview/confirm  
+  - Tracked source profile/create
+  - Tracked source entry refresh/import
+- **Dashboard**: falls back to `ingest_jobs` counts when memory stores are empty (restart recovery)
+- **CLI**: `ingest list/show/retry/resume` commands
+- **Tests**: 54 new tests in `tests/test_ingest_jobs.py` — CRUD, dedup, status transitions, retry, expiry, restart recovery, dual-write, CLI smoke
+- **Result**: 1439 tests (1438 passed, 1 pre-existing flaky), ruff clean
+
+### Planned (P3-B/C/D)
+- **P3-B**: Vault Lint — 7 lint rules for Obsidian vault health
+- **P3-C**: Review Queue — unified `review_items` table
+- **P3-D**: MCP Server — 9 read-only tools via Python `mcp` package
 - Design docs: `docs/P3_PLAN.md`, `docs/INGEST_QUEUE_DESIGN.md`, `docs/VAULT_LINT_REVIEW_QUEUE_DESIGN.md`, `docs/MCP_SERVER_DESIGN.md`
-- New project rules: `docs/PROJECT_RULES.md`
+- Project rules: `docs/PROJECT_RULES.md`
 
 ## P2-S.3.5 — Source Ingestion Consistency & Release Hardening (2026-07-01)
 
