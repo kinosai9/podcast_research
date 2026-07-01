@@ -6,6 +6,7 @@ Orchestrates the P2-S.3.1 import pipeline (adapter selection → build_import_pr
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -155,6 +156,26 @@ def refresh_tracked_source(
                 preview_ids.append(preview.preview_id)
                 preview_store[preview.preview_id] = preview
 
+                # P3-A: Dual-write to persistent ingest_jobs
+                try:
+                    from podcast_research.sources.ingest_jobs import IngestJobManager
+                    IngestJobManager.create_job(
+                        source_type="tracked_entry",
+                        source_url=entry.url,
+                        source_hash=getattr(preview, "content_hash", "") or "",
+                        source_name=getattr(preview, "title", "") or entry.title or entry.url,
+                        preview_id=preview.preview_id,
+                        preview_data=json.dumps(
+                            preview,
+                            default=lambda o: o.__dict__,
+                            ensure_ascii=False,
+                        ),
+                        tracked_source_id=tracked_source_id,
+                        tracked_entry_id=entry_id,
+                    )
+                except Exception:
+                    pass  # Non-critical — memory store is primary for now
+
                 # Minimal quality → treat as failed (nothing useful to import)
                 if preview.parse_quality == "minimal":
                     failed_count += 1
@@ -291,6 +312,19 @@ def import_tracked_source_entries(
                 if result.get("success"):
                     update_tracked_source_entry_status(session, entry_id, "imported")
                     imported += 1
+                    # P3-A: Dual-confirm in ingest_jobs
+                    try:
+                        from podcast_research.sources.ingest_jobs import (
+                            IngestJobManager,
+                        )
+                        IngestJobManager.confirm_job(
+                            preview_id, action=action.value if hasattr(action, 'value') else str(action),
+                            action_label=str(action),
+                            result_path=result.get("path", ""),
+                            result_message=result.get("message", ""),
+                        )
+                    except Exception:
+                        pass
                     results.append({
                         "entry_id": entry_id,
                         "title": entry.get("title", ""),

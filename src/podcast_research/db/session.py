@@ -153,6 +153,53 @@ def _migrate_tracked_sources_tables(engine) -> None:
             """))
 
 
+def _migrate_ingest_jobs_table(engine) -> None:
+    """P3-A: Create ingest_jobs table and indexes if not exist."""
+    insp = inspect(engine)
+    if "ingest_jobs" not in insp.get_table_names():
+        with engine.begin() as conn:
+            conn.execute(text("""
+                CREATE TABLE ingest_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_key VARCHAR(256) NOT NULL,
+                    source_type VARCHAR(20) NOT NULL,
+                    source_url VARCHAR(500) DEFAULT '',
+                    source_hash VARCHAR(64) DEFAULT '',
+                    source_name VARCHAR(500) DEFAULT '',
+                    status VARCHAR(30) DEFAULT 'pending_preview',
+                    retry_count INTEGER DEFAULT 0,
+                    preview_data TEXT DEFAULT '',
+                    preview_id VARCHAR(20) DEFAULT '',
+                    action VARCHAR(50) DEFAULT '',
+                    action_label VARCHAR(100) DEFAULT '',
+                    result_path VARCHAR(500) DEFAULT '',
+                    result_message TEXT DEFAULT '',
+                    error_message TEXT DEFAULT '',
+                    tracked_source_id INTEGER,
+                    tracked_entry_id INTEGER,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    confirmed_at DATETIME,
+                    expires_at DATETIME
+                )
+            """))
+    # Ensure indexes exist (runs on fresh AND upgraded DBs)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_ingest_jobs_key_status "
+            "ON ingest_jobs(job_key, status) "
+            "WHERE status = 'pending_preview'"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_ingest_jobs_status ON ingest_jobs(status)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_ingest_jobs_source_type ON ingest_jobs(source_type)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_ingest_jobs_expires ON ingest_jobs(expires_at)"
+        ))
+
+
 def init_db(db_path: str | None = None) -> None:
     if _engine is None:
         init_engine(db_path)
@@ -162,6 +209,7 @@ def init_db(db_path: str | None = None) -> None:
     _migrate_channel_videos_table(_engine)
     _migrate_investment_views_table(_engine)
     _migrate_tracked_sources_tables(_engine)
+    _migrate_ingest_jobs_table(_engine)
 
 
 def get_session() -> Session:

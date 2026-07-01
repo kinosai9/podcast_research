@@ -2723,6 +2723,157 @@ def llm_wiki_reject(
 
 
 # ---------------------------------------------------------------------------
+# ingest 命令组（P3-A：持久化摄入队列）
+# ---------------------------------------------------------------------------
+
+ingest_app = typer.Typer(help="摄入队列管理（预览/确认/重试/恢复）")
+app.add_typer(ingest_app, name="ingest")
+
+
+@ingest_app.command("list")
+def ingest_list(
+    source_type: str = typer.Option(
+        None, "--type", "-t",
+        help="按来源类型过滤: url_import / file_upload / tracked_entry / source_profile",
+    ),
+    status: str = typer.Option(
+        None, "--status", "-s",
+        help="按状态过滤: pending_preview / confirmed_archive / skipped / failed / expired",
+    ),
+    limit: int = typer.Option(50, "--limit", "-n", help="最大返回数"),
+):
+    """列出摄入任务。"""
+    from podcast_research.db.session import init_db
+    from podcast_research.sources.ingest_jobs import IngestJobManager
+
+    init_db()
+    jobs = IngestJobManager.list_jobs(
+        source_type=source_type, status=status, limit=limit,
+    )
+
+    if not jobs:
+        console.print("[dim]没有匹配的摄入任务。[/dim]")
+        return
+
+    table = Table(title="摄入队列", show_lines=False)
+    table.add_column("ID", style="dim")
+    table.add_column("类型")
+    table.add_column("状态")
+    table.add_column("来源", max_width=50)
+    table.add_column("重试")
+    table.add_column("创建时间")
+
+    for j in jobs:
+        status_color = {
+            "pending_preview": "yellow",
+            "preview_failed": "red",
+            "confirmed_archive": "green",
+            "confirmed_deep_notes": "green",
+            "confirmed_derived_only": "green",
+            "confirmed_linked": "green",
+            "skipped": "dim",
+            "expired": "dim",
+            "overwritten": "dim",
+        }.get(j["status"], "white")
+
+        table.add_row(
+            str(j["id"]),
+            j["source_type"],
+            f"[{status_color}]{j['status']}[/{status_color}]",
+            (j.get("source_name") or j.get("source_url") or "-")[:48],
+            str(j.get("retry_count", 0)),
+            j.get("created_at", "-")[:19] if j.get("created_at") else "-",
+        )
+
+    console.print(table)
+
+
+@ingest_app.command("show")
+def ingest_show(
+    job_id: int = typer.Argument(..., help="任务 ID"),
+):
+    """查看摄入任务详情。"""
+    from podcast_research.db.session import init_db
+    from podcast_research.sources.ingest_jobs import IngestJobManager
+
+    init_db()
+    job = IngestJobManager.get_job(job_id)
+    if job is None:
+        console.print(f"[red]任务 {job_id} 不存在。[/red]")
+        raise typer.Exit(1)
+
+    # Main info panel
+    info_lines = [
+        f"ID: {job['id']}",
+        f"类型: {job['source_type']}",
+        f"状态: {job['status']}",
+        f"job_key: {job['job_key']}",
+        f"来源 URL: {job.get('source_url') or '-'}",
+        f"来源名称: {job.get('source_name') or '-'}",
+        f"内容哈希: {job.get('source_hash') or '-'}",
+        f"preview_id: {job.get('preview_id') or '-'}",
+        f"操作: {job.get('action') or '-'}",
+        f"操作标签: {job.get('action_label') or '-'}",
+        f"结果路径: {job.get('result_path') or '-'}",
+        f"结果消息: {job.get('result_message') or '-'}",
+        f"错误消息: {job.get('error_message') or '-'}",
+        f"重试次数: {job.get('retry_count', 0)}",
+        f"tracked_source_id: {job.get('tracked_source_id') or '-'}",
+        f"tracked_entry_id: {job.get('tracked_entry_id') or '-'}",
+        f"创建时间: {job.get('created_at') or '-'}",
+        f"确认时间: {job.get('confirmed_at') or '-'}",
+        f"过期时间: {job.get('expires_at') or '-'}",
+    ]
+    console.print(Panel("\n".join(info_lines), title=f"Ingest Job #{job_id}"))
+
+
+@ingest_app.command("retry")
+def ingest_retry(
+    job_id: int = typer.Argument(..., help="要重试的任务 ID"),
+):
+    """重试失败的摄入任务。将状态重置为 pending_preview。"""
+    from podcast_research.db.session import init_db
+    from podcast_research.sources.ingest_jobs import IngestJobManager
+
+    init_db()
+    result = IngestJobManager.retry_job(job_id)
+    if result is None:
+        console.print(f"[red]任务 {job_id} 无法重试（不存在或已达最大重试次数 {3}）。[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]任务 {job_id} 已重置为 pending_preview。[/green]")
+    console.print(f"  重试次数: {result['retry_count']}")
+
+
+@ingest_app.command("resume")
+def ingest_resume():
+    """扫描待处理的摄入任务，显示恢复摘要。用于服务重启后检查。"""
+    from podcast_research.db.session import init_db
+    from podcast_research.sources.ingest_jobs import IngestJobManager
+
+    init_db()
+    counts = IngestJobManager.resume_pending()
+    if not counts:
+        console.print("[dim]没有待处理的摄入任务。[/dim]")
+        return
+
+    console.print("[bold]待处理摄入任务：[/bold]")
+    total = 0
+    for source_type, cnt in sorted(counts.items()):
+        type_label = {
+            "url_import": "URL 导入",
+            "file_upload": "文件上传",
+            "tracked_entry": "跟踪源条目",
+            "source_profile": "来源画像",
+        }.get(source_type, source_type)
+        console.print(f"  {type_label}: {cnt}")
+        total += cnt
+
+    console.print(f"\n[bold]总计: {total} 条待确认[/bold]")
+    console.print("[dim]使用 'ingest list --status pending_preview' 查看详情。[/dim]")
+
+
+# ---------------------------------------------------------------------------
 # serve 命令
 # ---------------------------------------------------------------------------
 

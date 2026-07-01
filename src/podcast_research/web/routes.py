@@ -1499,10 +1499,27 @@ def _build_sources_dashboard_context(vault_path_str: str) -> dict:
         pass
 
     # ── URL Import Previews ─────────────────────────────────────────────
+    # P3-A: Memory store is primary (dual-write phase). ingest_jobs augments
+    # for restart recovery — after restart, memory stores are empty, so we
+    # fall back to ingest_jobs counts.
     url_preview_count = len(_preview_store)
+    if url_preview_count == 0:
+        try:
+            from podcast_research.sources.ingest_jobs import IngestJobManager
+            url_counts = IngestJobManager.count_by_status(source_type="url_import")
+            url_preview_count = url_counts.get("pending_preview", 0)
+        except Exception:
+            pass
 
     # ── File Upload Previews ────────────────────────────────────────────
     file_preview_count = len(_file_preview_store)
+    if file_preview_count == 0:
+        try:
+            from podcast_research.sources.ingest_jobs import IngestJobManager
+            file_counts = IngestJobManager.count_by_status(source_type="file_upload")
+            file_preview_count = file_counts.get("pending_preview", 0)
+        except Exception:
+            pass
 
     # ── SourceArchive Stats ─────────────────────────────────────────────
     archive_file_count = 0
@@ -2372,6 +2389,20 @@ def action_source_import_preview(
 
     _preview_store[preview.preview_id] = preview
 
+    # P3-A: Dual-write to persistent ingest_jobs
+    try:
+        from podcast_research.sources.ingest_jobs import IngestJobManager
+        IngestJobManager.create_job(
+            source_type="url_import",
+            source_url=url,
+            source_hash=getattr(preview, "content_hash", ""),
+            source_name=getattr(preview, "title", "") or url,
+            preview_data=_serialize_preview(preview),
+            preview_id=preview.preview_id,
+        )
+    except Exception:
+        pass  # Non-critical — memory store is the fallback
+
     # Action labels and descriptions for the template
     from podcast_research.sources.models import ACTION_DESCRIPTIONS, ACTION_LABELS
 
@@ -2407,7 +2438,7 @@ def action_source_import_confirm(
             url="/sources/import?msg=error:预览已过期，请重新导入", status_code=303,
         )
 
-    from podcast_research.sources.models import ActionEnum
+    from podcast_research.sources.models import ACTION_LABELS, ActionEnum
     try:
         action_enum = ActionEnum(action)
     except ValueError:
@@ -2416,6 +2447,15 @@ def action_source_import_confirm(
         )
 
     if action_enum == ActionEnum.skip:
+        # P3-A: Persist skip decision
+        try:
+            from podcast_research.sources.ingest_jobs import IngestJobManager
+            IngestJobManager.confirm_job(
+                preview_id, action="skip",
+                action_label=ACTION_LABELS.get("skip", "跳过"),
+            )
+        except Exception:
+            pass
         return RedirectResponse(
             url="/sources/import?msg=info:已取消导入", status_code=303,
         )
@@ -2424,10 +2464,29 @@ def action_source_import_confirm(
         from podcast_research.sources.import_preview import execute_import_action
         result = execute_import_action(preview, action_enum, vp)
     except Exception as e:
+        # P3-A: Record failure
+        try:
+            from podcast_research.sources.ingest_jobs import IngestJobManager
+            IngestJobManager.mark_failed(preview_id, str(e)[:500])
+        except Exception:
+            pass
         return RedirectResponse(
             url=f"/sources/import?msg=error:导入失败 — {str(e)[:120]}",
             status_code=303,
         )
+
+    # P3-A: Dual-write result to ingest_jobs
+    try:
+        from podcast_research.sources.ingest_jobs import IngestJobManager
+        action_label = ACTION_LABELS.get(action, action)
+        IngestJobManager.confirm_job(
+            preview_id, action=action,
+            action_label=action_label,
+            result_path=result.get("path", ""),
+            result_message=result.get("message", ""),
+        )
+    except Exception:
+        pass
 
     if result.get("success"):
         return RedirectResponse(
@@ -2516,6 +2575,19 @@ def action_sources_tracked_profile(
     profile_id = uuid.uuid4().hex[:12]
     _profile_store[profile_id] = profile
 
+    # P3-A: Dual-write profile to ingest_jobs
+    try:
+        from podcast_research.sources.ingest_jobs import IngestJobManager
+        IngestJobManager.create_job(
+            source_type="source_profile",
+            source_url=url,
+            source_name=name.strip() or profile.provider or profile.domain,
+            preview_data=_serialize_preview(profile),
+            preview_id=profile_id,
+        )
+    except Exception:
+        pass
+
     ctx = {
         "request": request,
         "vault_configured": True,
@@ -2545,6 +2617,16 @@ def action_sources_tracked_create(
     if profile is None:
         return RedirectResponse(
             url="/sources/tracked/add?msg=error:预览已过期，请重新输入 URL", status_code=303)
+
+    # P3-A: Confirm the profile job
+    try:
+        from podcast_research.sources.ingest_jobs import IngestJobManager
+        IngestJobManager.confirm_job(
+            profile_id, action="create_tracked_source",
+            action_label="创建固定跟踪源",
+        )
+    except Exception:
+        pass
 
     if not profile.tracking_supported:
         return RedirectResponse(
@@ -2956,6 +3038,19 @@ async def action_source_file_preview(
     # Store temp path for confirm step (attached to preview)
     preview._temp_path = tmp_path  # type: ignore[attr-defined]
 
+    # P3-A: Dual-write to persistent ingest_jobs
+    try:
+        from podcast_research.sources.ingest_jobs import IngestJobManager
+        IngestJobManager.create_job(
+            source_type="file_upload",
+            source_hash=getattr(preview, "content_hash", "") or "",
+            source_name=getattr(preview, "filename", "") or file.filename,
+            preview_data=_serialize_preview(preview),
+            preview_id=preview.preview_id,
+        )
+    except Exception:
+        pass
+
     from podcast_research.sources.models import ACTION_DESCRIPTIONS, ACTION_LABELS
 
     ctx = {
@@ -2992,20 +3087,36 @@ def action_source_file_confirm(
 
     from podcast_research.sources.models import ActionEnum
 
+    # P3-A helper: record job outcome
+    def _record_file_job(status_action: str, path: str = "", msg: str = ""):
+        try:
+            from podcast_research.sources.ingest_jobs import IngestJobManager
+            from podcast_research.sources.models import ACTION_LABELS
+            IngestJobManager.confirm_job(
+                preview_id, action=status_action,
+                action_label=ACTION_LABELS.get(status_action, status_action),
+                result_path=path, result_message=msg,
+            )
+        except Exception:
+            pass
+
     if action == ActionEnum.skip.value:
         _cleanup_temp_file(getattr(preview, "_temp_path", None))
+        _record_file_job("skip")
         return RedirectResponse(
             url="/sources/files/import?msg=info:已跳过导入", status_code=303,
         )
 
     if action != ActionEnum.confirm_archive.value:
         _cleanup_temp_file(getattr(preview, "_temp_path", None))
+        _record_file_job("skip")
         return RedirectResponse(
             url=f"/sources/files/import?msg=error:无效的操作: {action}", status_code=303,
         )
 
     if not preview.import_eligible:
         _cleanup_temp_file(getattr(preview, "_temp_path", None))
+        _record_file_job("skip")
         return RedirectResponse(
             url=f"/sources/files/import?msg=error:{preview.ineligible_reason or '该文件不符合入库条件'}",
             status_code=303,
@@ -3018,6 +3129,11 @@ def action_source_file_confirm(
         result = confirm_file_import(preview, vp)
     except Exception as e:
         _cleanup_temp_file(getattr(preview, "_temp_path", None))
+        try:
+            from podcast_research.sources.ingest_jobs import IngestJobManager
+            IngestJobManager.mark_failed(preview_id, str(e)[:500])
+        except Exception:
+            pass
         return RedirectResponse(
             url=f"/sources/files/import?msg=error:导入失败 — {str(e)[:120]}",
             status_code=303,
@@ -3025,6 +3141,13 @@ def action_source_file_confirm(
 
     # Cleanup temp file after successful import
     _cleanup_temp_file(getattr(preview, "_temp_path", None))
+
+    # P3-A: Record successful archive
+    _record_file_job(
+        "confirm_archive",
+        path=result.get("path", ""),
+        msg=result.get("message", ""),
+    )
 
     if result.get("success"):
         return RedirectResponse(
@@ -3039,6 +3162,20 @@ def action_source_file_confirm(
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _serialize_preview(preview: object) -> str:
+    """P3-A: Serialize an ImportPreview / FileImportPreview / SourceProfile to JSON."""
+    import json
+    if preview is None:
+        return ""
+    try:
+        # Use dataclass-compatible serialization
+        return json.dumps(
+            preview, default=lambda o: o.__dict__, ensure_ascii=False,
+        )
+    except (TypeError, ValueError):
+        return ""
 
 
 def _sanitize_upload_filename(filename: str) -> str:

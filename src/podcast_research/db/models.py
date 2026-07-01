@@ -232,3 +232,49 @@ class TrackedSourceEntry(Base):
     preview_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     error_message: Mapped[str] = mapped_column(Text, default="")
+
+
+class IngestJob(Base):
+    """P3-A: Persistent ingest job — replaces _preview_store / _file_preview_store.
+
+    Each ingest task (URL import, file upload, tracked source entry, source profile)
+    is a row in this table. Survives server restart.
+    """
+
+    __tablename__ = "ingest_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Identity
+    job_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(20), nullable=False)
+        # url_import / file_upload / tracked_entry / source_profile
+    source_url: Mapped[str] = mapped_column(String(500), default="")
+    source_hash: Mapped[str] = mapped_column(String(64), default="")
+    source_name: Mapped[str] = mapped_column(String(500), default="")
+
+    # Status
+    status: Mapped[str] = mapped_column(String(30), default="pending_preview")
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Preview data (JSON-serialized ImportPreview / FileImportPreview / SourceProfile)
+    preview_data: Mapped[str] = mapped_column(Text, default="")
+    preview_id: Mapped[str] = mapped_column(String(20), default="")
+
+    # User action
+    action: Mapped[str] = mapped_column(String(50), default="")
+    action_label: Mapped[str] = mapped_column(String(100), default="")
+
+    # Result
+    result_path: Mapped[str] = mapped_column(String(500), default="")
+    result_message: Mapped[str] = mapped_column(Text, default="")
+    error_message: Mapped[str] = mapped_column(Text, default="")
+
+    # References
+    tracked_source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tracked_entry_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
